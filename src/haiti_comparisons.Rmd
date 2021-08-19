@@ -35,33 +35,53 @@ library(sf)
 
 ```{r setup, include=FALSE}
 source(here("helper_funs.R"))
-
 zm <- readRDS(here("daily_data_sorted1.RDS"))
-zm <- zm$get_data_frame("merged_data")
-view (zm)
+
+zm <- zm$get_data_frame("merge")
+zm <- filter(zm, station != "thiotte")
+view(zm)
+
+zm <- transmute (zm , 
+              station = station,
+              latitde = latitude,
+              longitude = longitude, 
+              year = year(date),
+              month = month(date),
+              day = day(date),
+              rain = rain,
+              date = date, 
+              chirps_rain = chirps_rain
+              
+              )
+
+view(zm)
+quality_control<- filter(zm, month == c(6:11) ,rain == 0, chirps_rain >0)
+
+quality_control$rain <-NA
+
+view (quality_control)
 if(anyDuplicated(zm %>%dplyr::select(station,date))) stop("Duplicates found!")
-# 1 Aug = 214
+# 1 Jan = 1
 s_doy_start <- 1
+zm$date <- as.Date(zm$date)
 zm <- zm %>% mutate(doy = yday_366(date),
                     s_doy = (doy - s_doy_start + 1) %% 366,
                     s_doy = ifelse(s_doy == 0, 366, s_doy),
-                    syear = year(date),
-                    syear = ifelse(s_doy > (366 - s_doy_start + 1), syear - 1, syear),
+                    year = year(date),
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), year - 1, year),
                     month = month(date),
                     month = factor(month, levels = c(1:12)), #change
                     month_abb = factor(month, labels = month.abb[c(1:12)]),
-                    rain = ifelse(rain < 0, 0, rain)
-                    )
+                    rain = rain
 
-view (zm)
-
+)
 zm_long_st <- zm %>% 
   melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
                    "doy", "s_doy"),
        measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
        variable.name = "product", value.name = "pr_rain")
 
-view (zm_long_st)
+# view (zm_long_st)
 #the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
 
 #creates a rainday column where the values are true or false depending on if there is rain that day or not
@@ -70,39 +90,39 @@ zm_long <- zm %>%
        measure.vars = names(zm)[endsWith(names(zm), "rain")],
        variable.name = "product", value.name = "rain") %>%
   mutate(rainday = rain > 1)
-view(zm_long)
+# view(zm_long)
 
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-stations <- c("quanaminthe", "thiotte", "cap_hatien", "petitionville", "jacmel", "jeremie", "les_cayes","damien") #north to south would be a better order for these 
+stations <- c( "cap_hatien","quanaminthe", "jeremie", "damien", "petitionville", "jacmel", "les_cayes") #north to south would be a better order for these 
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
-view(zm_long)
+# view(zm_long)
 
 metadata_station <- read.csv(here("daily_metadata.csv"))
 
 
-view(metadata_station)
+# view(metadata_station)
 
 
 
 metadata_station$station <- factor(metadata_station$station, levels = stations) #making the station column a factor and setting the levels 
-view (metadata_station)
+# view (metadata_station)
 zm_long$station <- factor(zm_long$station, levels = stations)
-view(zm_long)
+# view(zm_long)
 by_station <- zm_long %>%
   group_by(station) %>%
   filter(!is.na(rain)) %>%
   summarise(first_date = first(date), #this line of code seems to be giving the same last date for all our data 
             last_date = last(date))
 
-view(by_station)
+# view(by_station)
 
 
-metadata_station<- left_join(metadata_station, by_station, by = "station")
+metadata_station <- left_join(metadata_station, by_station, by = "station")
 
-view(metadata_station) #get rid of column x 
+# view(metadata_station) #get rid of column x 
 rm(by_station)
 
 
@@ -153,6 +173,9 @@ last_map
 ```{r gof_fun}
 dgof <- function(df, sim, obs, na.rm = TRUE) {
   g <- hydroGOF::gof(sim = df[[sim]], obs = df[[obs]], na.rm = na.rm) # how this function is working? 
+  x <- as.list(g)
+  names(x) <- row.names(g)
+  x
 }
 
 comp_stats <- c("r", "ME", "PBIAS %", "MAE", "NSE", "rSD")
@@ -165,29 +188,30 @@ names(comp_stats) <- c("Correlation coefficient (1 = Perfect)",
 
 comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
 
+
 ```
 
 ## Yearly Comparisons (August to July)
 
 ```{r yearly_calcs}
-view (zm_long) ##this output has been fixed
+# view (zm_long) ##this output has been fixed
 by_syear <- zm_long %>%
-group_by(syear,station,product) %>%
-summarise(total_rain = sum(naif_nmin(rain, 355)), 
-            n_rain = sum(naif_nmin(rain, 355) > 0.1), 
-            max_rain = max(naif_nmin(rain, 350)), 
+  group_by(syear,station,product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 355)),
+            n_rain = sum(naif_nmin(rain, 355) > 0.1),
+            max_rain = max(naif_nmin(rain, 350)),
             mean_rain = total_rain/n_rain,
             n_na = sum(is.na(rain))
             
 )
-view (by_syear) #seem to have the columns , nrain , max rain etc that we need later on
+# view (by_syear) #seem to have the columns , nrain , max rain etc that we need later on
 
 by_syear_st <- by_syear %>%  #changed from zm_long to by_syear 
   pivot_wider(id_cols = c(station, syear),
               names_from = product, values_from = total_rain:n_na, names_sep = "__") 
 
 
-view (by_syear_st)
+# view (by_syear_st)
 
 
 gof_syear <- by_syear_st %>%  
@@ -203,23 +227,20 @@ gof_syear <- by_syear_st %>%
         
   )
 
-#Where is total_rain_station coming from? 
+view (gof_syear)
 
 gof_pr <- gof_syear %>% 
-  unnest(cols = data) %>% 
-  group_by(product) %>% 
-  nest()
+  unnest(cols = data)
+
+view (gof_pr)
 ```
 
 ```{r yearly_plots_fun}
-yearly_plots <- function(df, gof_col, stat_pr, stat_st, product_name) {
+yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
   max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
-  vals_relace <- c(product_name, "station")
-  names(vals_relace) <- c(stat_pr, stat_st)
   dat <- df %>% 
     pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
-    mutate(product = recode(product, !!!vals_relace),
-           ME = purrr::map_dbl(.data[[gof_col]], "ME"),
+    mutate(ME = purrr::map_dbl(.data[[gof_col]], "ME"),
            r = purrr::map_dbl(.data[[gof_col]], "r"),
            rSD = purrr::map_dbl(.data[[gof_col]], "rSD")
            )
@@ -247,32 +268,29 @@ yearly_plots <- function(df, gof_col, stat_pr, stat_st, product_name) {
     geom_text(aes(label = paste("rSD", round(rSD, 2))), 
               size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
               inherit.aes = FALSE) +
-    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
+    ggtitle(paste(stat_pr, ":", "CHIRPS", "vs", "station")) +
     facet_wrap(~station)
   g
 }
 ```
 
 ```{r stats_tables_fun}
-stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
-  for(i in seq_along(obj_stats)) {
-    dat <- df %>% 
-      ungroup() %>%
+stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
+  dat <- df %>% 
+    ungroup()
+  for (i in seq_along(obj_stats)) {
+    dat <- dat %>%
       mutate(purrr::map_dbl(df[[obj_col]], obj_stats[i]))
     names(dat)[ncol(dat)] <- obj_stats[i]
-    dat <- dat %>% 
-      mutate(station = as.character(station)) %>%
-      pivot_wider(id_cols = "station", names_from = "product", 
-                  values_from = obj_stats[[i]]) %>%
-      data.frame()
-  dat[nrow(dat) + 1, ] <- c(list("(All)"), as.list(as.numeric(colMeans(dat[ , -1]))))
-  dat %>%
-    kable(digits = comp_stats_digits[i], caption = names(obj_stats[i]), 
-          format.args = list(big.mark = ",")) %>%
-    skable() %>%
-    row_spec(nrow(dat), bold = TRUE) %>%
-    print()
   }
+  dat <- dat %>% 
+    mutate(station = as.character(station))
+  dat <- dat[ , c("station", obj_stats)]
+  dat %>%
+  kable(digits = comp_stats_digits[i], caption = paste("Comparison statistics:", name), 
+        format.args = list(big.mark = ",")) %>%
+  skable() %>%
+  print()
 }
 ```
 
@@ -287,32 +305,24 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats) {
 - Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_total_plots}
-p_syear_total <- gof_pr %>%
-  mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__total_rain", 
-                        stat_pr = "total_rain__chirps_rain", stat_st = "total_rain__station", 
-                        product_name = product),
-         paths = here("daily_metadata", 
-                      paste0("daily_metadata", "syear_", "total_rain", "_", product, ".png")))
 
-walk2(p_syear_total$paths, p_syear_total$p, ggsave, width = 12, height = 6)
-walk(p_syear_total$p, print)
+yearly_plots(gof_pr, gof_col = "gof__total_rain", 
+                        stat_pr = "total_rain__chirps_rain", 
+                        stat_st = "total_rain__station")
+
+ggsave(here("syear_total_rain.png"), width = 12, height = 6)
+
 ```
 
 ```{r yearly_n_obs, results="asis"}
-dat <- gof_syear %>% 
-  dplyr::select(station, product, n) %>%
-  pivot_wider(id_cols = c(station), names_from = product, values_from = n)
-
-names(dat)[endsWith(names(dat), "rain")] <- 
-  substr(names(dat)[endsWith(names(dat), "rain")], 
-         1, nchar(names(dat)[endsWith(names(dat), "rain")]) - 5)
-dat %>%
+gof_syear %>% 
+  dplyr::select(station, n) %>%
   kable(caption = "Number of years compared") %>%
   skable()
 ```
 
 ```{r yearly_total_rain_tables, results="asis"}
-stats_tables(gof_syear, "gof__total_rain")
+stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 ```
 
 
@@ -325,19 +335,23 @@ stats_tables(gof_syear, "gof__total_rain")
 - Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_n_rain_plots}
-p_syear_n <- gof_pr %>%
-  mutate(p = purrr::map(data, yearly_plots, gof_col = "gof__n_rain", 
-                        stat_pr = "n_rain", stat_st = "n_rain__station", 
-                        product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "syear_", "n_rain", "_", product, ".png")))
 
-walk2(p_syear_n$paths, p_syear_n$p, ggsave, width = 12, height = 6)
-walk(p_syear_n$p, print)
+view (gof_pr)
+
+yearly_plots(gof_pr, gof_col = "gof__n_rain", #provides all the data in bold above the plot 
+             
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station")
+
+ggsave(here("syear_n_rain.png"), width = 12, height = 6)
+
+#want to change the y axis to read n_rain instead of chirps
 ```
 
 ```{r yearly_n_rain_tables, results="asis"}
-stats_tables(gof_syear, "gof__n_rain")
+
+view(gof_syear)
+stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
 ```
 
 ## Monthly Comparisons (November to April)
@@ -345,36 +359,54 @@ stats_tables(gof_syear, "gof__n_rain")
 ```{r monthly_calcs}
 by_month <- zm_long %>%
   group_by(station, syear, month_abb, product) %>%
-  filter(month %in% c(11:12, 1:4)) %>%
-  summarise(total_rain = sum(naif_nmin(rain, 25)), 
-            n_rain = sum(naif_nmin(rain, 25) > 0.1), 
+  #filter(month %in% c(11:12, 1:4)) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 25)),  
+            n_rain = sum(naif_nmin(rain, 25) > 0.1),  
             max_rain = max(naif_nmin(rain, 20)), 
-            mean_rain = total_rain/n_rain, 
+            mean_rain = total_rain/n_rain , 
             n_na = sum(is.na(rain))
             )
 
 by_month_st <- by_month %>%
   pivot_wider(id_cols = c(station, syear, month_abb), 
-              names_from = product, values_from = total_rain:n_na, names_sep = "__") %>%
-  pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
-               names_to = c(".value", "product"), names_sep = "__")
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") 
+#%>%
+ # pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
+  #             names_to = c(".value", "product"), names_sep = "__")
+
+
+
+
+
+
+
+by_month_st$mean_rain__station[is.nan(by_month_st$mean_rain__station)]<-0     #our mean rain solution comes out undetermined when the number of rain days and the total rain are 0
+by_month_st$mean_rain__chirps_rain[is.nan(by_month_st$mean_rain__chirps_rain)]<-0
+by_month_st$mean_rain__station[is.infinite(by_month_st$mean_rain__station)]<-0     #our mean rain solution comes out undetermined when the number of rain days and the total rain are 0
+by_month_st$mean_rain__chirps_rain[is.infinite(by_month_st$mean_rain__chirps_rain)]<-0
+view (by_month_st)
 
 gof_month <- by_month_st %>%
-  group_by(station, product) %>%
+  group_by(station) %>%
   nest() %>%
   mutate(n = purrr::map_int(data, 
-                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain))),
-         gof__total_rain = purrr::map(data, dgof, "total_rain", "total_rain__station", 
+                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain__chirps_rain))),
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", "total_rain__station", 
                                       na.rm = TRUE),
-         gof__n_rain = purrr::map(data, dgof, "n_rain", "n_rain__station", na.rm = TRUE),
-         # gof__mean_rain = purrr::map(data, dgof, "mean_rain", "mean_rain__station", 
-         #                             na.rm = TRUE)
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", "mean_rain__station", 
+                                      na.rm = TRUE)
          )
 
+
+view (gof_month)
+
 gof_pr_month <- gof_month %>%
-  unnest(cols = data) %>% 
-  group_by(product) %>% 
-  nest()
+  unnest(cols = data)
+  
+#%>% 
+  #group_by(product) %>% 
+  n#est()
 ```
 
 ```{r monthly_plots_fun}
@@ -382,7 +414,7 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
   vals_relace <- c(product_name, "station")
   names(vals_relace) <- c(stat_pr, stat_st)
   dat <- df %>% 
-    filter(month_abb %in% month.abb[c(11:12, 1:4)]) %>%
+    filter(month_abb %in% month.abb[c(1:12)]) %>%
     pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
     mutate(product = recode(product, !!!vals_relace))
 
@@ -393,7 +425,7 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
   g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
     geom_line() +
     geom_point() +
-    #geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(1979, 2012)) +
     ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
     facet_grid(station~month_abb)
@@ -411,18 +443,32 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
 - Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r monthly_plots_total_rain}
-p_month_total <- gof_pr_month %>%
-  mutate(p = purrr::map(data, monthly_plots, stat_pr = "total_rain", 
-                        stat_st = "total_rain__station", product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "month_", "total_rain", "_", product, ".png")))
 
-walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
-walk(p_month_total$p, print)
+view (gof_pr_month)
+
+monthly_plots(gof_pr_month, #provides all the data in bold above the plot 
+             
+                        stat_pr = "total_rain__chirps_rain", 
+                        stat_st = "total_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
+
+ggsave(here("smonth_total_rain.png"), width = 12, height = 6)
+
+
+
+#p_month_total <- gof_pr_month %>%
+ # mutate(p = purrr::map(data, monthly_plots, stat_pr = "total_rain", 
+  #                      stat_st = "total_rain__station", product_name = product),
+   #      paths = here("results", "zambia", 
+    #                  paste0("zambia_", "month_", "total_rain", "_", product, ".png")))
+
+#walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
+#walk(p_month_total$p, print)
 ```
 
 ```{r monthly_tables_total_rain, results="asis"}
-stats_tables(gof_month, "gof__total_rain")
+
+view (gof_month)
+stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
 ```
 
 ### Comparison statistics for number of monthly raindays
@@ -431,18 +477,28 @@ stats_tables(gof_month, "gof__total_rain")
 - Generally the products have the same or slightly higher variability
 
 ```{r monthly_plots_n_rain}
-p_month_total <- gof_pr_month %>%
-  mutate(p = purrr::map(data, monthly_plots, stat_pr = "n_rain", 
-                        stat_st = "n_rain__station", product_name = product),
-         paths = here("results", "zambia", 
-                      paste0("zambia_", "month_", "n_rain", "_", product, ".png")))
+view(gof_pr_month)
 
-walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
-walk(p_month_total$p, print)
+monthly_plots(gof_pr_month, 
+             
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
+
+ggsave(here("smonth_n_rain.png"), width = 12, height = 6)
+
+#p_month_total <- gof_pr_month %>%
+ # mutate(p = purrr::map(data, monthly_plots, stat_pr = "n_rain", 
+  #                      stat_st = "n_rain__station", product_name = product),
+   #      paths = here("results", "zambia", 
+    #                  paste0("zambia_", "month_", "n_rain", "_", product, ".png")))
+
+#walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
+#walk(p_month_total$p, print)
 ```
 
 ```{r monthly_tables_n_rain, results="asis"}
-stats_tables(gof_month, "gof__n_rain")
+stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month" )
+
 ```
 
 ## Markov Chain models of the chance of rain
