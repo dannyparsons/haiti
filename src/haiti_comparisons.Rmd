@@ -39,6 +39,7 @@ zm <- readRDS(here("daily_data_sorted1.RDS"))
 
 zm <- zm$get_data_frame("merge")
 zm <- filter(zm, station != "thiotte")
+
 view(zm)
 
 zm <- transmute (zm , 
@@ -51,15 +52,65 @@ zm <- transmute (zm ,
               rain = rain,
               date = date, 
               chirps_rain = chirps_rain
-              
-              )
+)
 
-view(zm)
-quality_control<- filter(zm, month == c(6:11) ,rain == 0, chirps_rain >0)
+zm <- zm %>%
+  # Group by station and month for the calculation
+  group_by(station, month,year) %>%
+  # Add two columns for total monthly rainfall and number of missing values in the month
+  mutate(t_rain = sum(rain, na.rm = TRUE), #for each station and each month we calculate the total rain
+         n_na = sum(is.na(rain)), #for each station and each month we calculate the number of missing values 
+         # Make rain_adj = NA if in hurricane season, monthly total was 0 and there were no missing values
+         # and otherwise rain_adj = rain
+         rain_adj = ifelse(month %in% 6:11 && t_rain == 0 && n_na == 0, NA, rain))
 
-quality_control$rain <-NA
+view (zm)
+for (i in 1:102270) {
 
-view (quality_control)
+  if (!is.na(zm[[12]][i]) ) {
+    
+    zm[[12]][i] <- zm[[7]][i]
+    }
+}
+
+zm <- zm %>% 
+  transmute(
+    station = station,
+    latitude = latitde,
+    longitude = longitude,
+    year = year, 
+    month = month,
+    day = day, 
+    rain = rain_adj,
+    date = date, 
+    chirps_rain
+    
+    
+    
+    
+  )
+view (zm)
+x<- filter(zm, t_rain==0, n_na == 0)
+
+
+view (x)
+
+zm_monthly_zero <- zm %>%
+  group_by(station, month,year) %>%
+  summarise(t_rain = sum(rain_adj, na.rm = TRUE),
+            n_na = sum(is.na(rain_adj))) %>%
+  filter(t_rain == 0)
+View(zm_monthly_zero)
+
+
+
+
+
+view (zm)
+
+
+ 
+
 if(anyDuplicated(zm %>%dplyr::select(station,date))) stop("Duplicates found!")
 # 1 Jan = 1
 s_doy_start <- 1
@@ -71,15 +122,18 @@ zm <- zm %>% mutate(doy = yday_366(date),
                     syear = ifelse(s_doy > (366 - s_doy_start + 1), year - 1, year),
                     month = month(date),
                     month = factor(month, levels = c(1:12)), #change
-                    month_abb = factor(month, labels = month.abb[c(1:12)]),
+                    month_abb = month.abb[month],
                     rain = rain
 
 )
+
+view(zm)
 zm_long_st <- zm %>% 
   melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
                    "doy", "s_doy"),
        measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
        variable.name = "product", value.name = "pr_rain")
+
 
 # view (zm_long_st)
 #the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
@@ -90,15 +144,15 @@ zm_long <- zm %>%
        measure.vars = names(zm)[endsWith(names(zm), "rain")],
        variable.name = "product", value.name = "rain") %>%
   mutate(rainday = rain > 1)
-# view(zm_long)
+ view(zm_long)
 
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-stations <- c( "cap_hatien","quanaminthe", "jeremie", "damien", "petitionville", "jacmel", "les_cayes") #north to south would be a better order for these 
+stations <- c( "cap_haitien","quanaminthe", "jeremie", "damien", "petitionville", "jacmel", "les_cayes") #north to south would be a better order for these 
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
-# view(zm_long)
+ view(zm_long)
 
 metadata_station <- read.csv(here("daily_metadata.csv"))
 
@@ -106,7 +160,7 @@ metadata_station <- read.csv(here("daily_metadata.csv"))
 # view(metadata_station)
 
 
-
+view(zm_long)
 metadata_station$station <- factor(metadata_station$station, levels = stations) #making the station column a factor and setting the levels 
 # view (metadata_station)
 zm_long$station <- factor(zm_long$station, levels = stations)
@@ -117,12 +171,12 @@ by_station <- zm_long %>%
   summarise(first_date = first(date), #this line of code seems to be giving the same last date for all our data 
             last_date = last(date))
 
-# view(by_station)
+ view(by_station)
 
 
 metadata_station <- left_join(metadata_station, by_station, by = "station")
 
-# view(metadata_station) #get rid of column x 
+ view(metadata_station) #get rid of column x 
 rm(by_station)
 
 
@@ -195,15 +249,32 @@ comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
 
 ```{r yearly_calcs}
 # view (zm_long) ##this output has been fixed
+view(zm_long)
+
+quality_control <- zm_long %>% 
+  group_by(syear,station,month) %>% 
+  summarise(
+    monthly_rain = sum(rain)
+    
+  )
+
+
+
+
+
+view(quality_control)
 by_syear <- zm_long %>%
   group_by(syear,station,product) %>%
   summarise(total_rain = sum(naif_nmin(rain, 355)),
             n_rain = sum(naif_nmin(rain, 355) > 0.1),
             max_rain = max(naif_nmin(rain, 350)),
             mean_rain = total_rain/n_rain,
-            n_na = sum(is.na(rain))
+            n_na = sum(is.na(rain)),
+            
             
 )
+
+view (by_syear)
 # view (by_syear) #seem to have the columns , nrain , max rain etc that we need later on
 
 by_syear_st <- by_syear %>%  #changed from zm_long to by_syear 
@@ -211,7 +282,7 @@ by_syear_st <- by_syear %>%  #changed from zm_long to by_syear
               names_from = product, values_from = total_rain:n_na, names_sep = "__") 
 
 
-# view (by_syear_st)
+view (by_syear_st)
 
 
 gof_syear <- by_syear_st %>%  
@@ -231,6 +302,7 @@ view (gof_syear)
 
 gof_pr <- gof_syear %>% 
   unnest(cols = data)
+gof_pr <- filter(gof_pr, station != "NA") #this line is used to get rid of the NA table , yet to determine where it comes from however
 
 view (gof_pr)
 ```
@@ -403,7 +475,9 @@ view (gof_month)
 
 gof_pr_month <- gof_month %>%
   unnest(cols = data)
-  
+
+gof_pr_month <- filter(gof_pr_month, station != "NA")
+view (gof_pr_month)  
 #%>% 
   #group_by(product) %>% 
   n#est()
@@ -516,9 +590,11 @@ stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month" )
 - The optimum threshold may depend on the station
 
 ```{r markov_chain_setup}
+view(zm_long)
+view (zm_long_st)
 zambia_markov <- zm_long_st %>% 
-  filter(!is.na(rain) & !is.na(pr_rain)) %>%
-  mutate(rainday1 = rain > 0.85,
+  filter(!is.na(pr_rain)) %>% #is.na(rain) &
+  mutate(  #rainday1 = rain > 0.85,
          pr_rainday1 = pr_rain > 0.85,
          pr_rainday3 = pr_rain > 3,
          pr_rainday4 = pr_rain > 4,
