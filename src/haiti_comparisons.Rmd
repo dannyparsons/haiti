@@ -34,97 +34,78 @@ library(sf)
 ```
 
 ```{r setup, include=FALSE}
-source(here("helper_funs.R"))
-zm <- readRDS(here("daily_data_sorted1.RDS"))
+source(here("src", "helper_funs.R"))
+zm <- readRDS(here("data", "daily_data_sorted1.RDS"))
 
 zm <- zm$get_data_frame("merge")
-zm <- filter(zm, station != "thiotte")
+zm <- dplyr::filter(zm, station != "thiotte")
+zm$date <- as.Date(zm$date)
 
-view(zm)
-
-zm <- transmute (zm , 
-              station = station,
-              latitde = latitude,
-              longitude = longitude, 
-              year = year(date),
-              month = month(date),
-              day = day(date),
-              rain = rain,
-              date = date, 
-              chirps_rain = chirps_rain
+zm <- transmute(zm,
+                station = station,
+                latitde = latitude,
+                longitude = longitude, 
+                date = date, 
+                year = year(date),
+                month = month(date),
+                day = day(date),
+                rain = rain,
+                chirps_rain = chirps_rain
 )
 
-zm <- zm %>%
-  # Group by station and month for the calculation
-  group_by(station, month,year) %>%
-  # Add two columns for total monthly rainfall and number of missing values in the month
-  mutate(t_rain = sum(rain, na.rm = TRUE), #for each station and each month we calculate the total rain
-         n_na = sum(is.na(rain)), #for each station and each month we calculate the number of missing values 
-         # Make rain_adj = NA if in hurricane season, monthly total was 0 and there were no missing values
-         # and otherwise rain_adj = rain
-         rain_adj = ifelse(month %in% 6:11 && t_rain == 0 && n_na == 0, NA, rain))
+if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
 
-view (zm)
-
-zm[["rain_adj"]] <- ifelse(!is.na(zm[["rain_adj"]]), zm[["rain"]], zm[["rain_adj"]])
-
-#in r vectors are generally vectorised so that you do not need a for loop 
-                
-zm <- zm %>% 
-  transmute(
-    station = station,
-    latitude = latitde,
-    longitude = longitude,
-    year = year, 
-    month = month,
-    day = day, 
-    rain = rain_adj,
-    date = date, 
-    chirps_rain
-    
-    
-    
-    
-  )
-view (zm)
-x<- filter(zm, t_rain==0, n_na == 0)
-
-
-view (x)
-
-zm_monthly_zero <- zm %>%
-  group_by(station, month,year) %>%
-  summarise(t_rain = sum(rain_adj, na.rm = TRUE),
-            n_na = sum(is.na(rain_adj))) %>%
-  filter(t_rain == 0)
-View(zm_monthly_zero)
-
-
-
-
-
-view (zm)
-
-
- 
-
-if(anyDuplicated(zm %>%dplyr::select(station,date))) stop("Duplicates found!")
 # 1 Jan = 1
 s_doy_start <- 1
-zm$date <- as.Date(zm$date)
 zm <- zm %>% mutate(doy = yday_366(date),
                     s_doy = (doy - s_doy_start + 1) %% 366,
                     s_doy = ifelse(s_doy == 0, 366, s_doy),
-                    year = year(date),
                     syear = ifelse(s_doy > (366 - s_doy_start + 1), year - 1, year),
-                    month = month(date),
-                    month = factor(month, levels = c(1:12)), #change
-                    month_abb = month.abb[month],
-                    rain = rain
+                    month_abb = month(date, label = TRUE))
+```
 
-)
+```{r monthly_zeros}
+# Look at months with zero total rainfall and no missing values
+zm_zero_months <- zm %>%
+  group_by(station, year, month) %>%
+  summarise(t_rain = sum(rain, na.rm = TRUE),
+            n_na = sum(is.na(rain))) %>%
+  dplyr::filter(t_rain == 0 & n_na == 0)
 
-view(zm)
+zm_month <- zm %>%
+  group_by(station, year, month) %>%
+  summarise(t_rain = sum(rain),
+            n_na = sum(is.na(rain)))
+
+zm_month_wide <- zm_month %>%
+  pivot_wider(id_cols = c(year, month), names_from = station, values_from = t_rain)
+
+zm <- zm %>%
+  # Group by station and month for the calculation
+  group_by(station, year, month) %>%
+  # Add two columns for total monthly rainfall and number of missing values in the month
+  mutate(t_rain = sum(rain, na.rm = TRUE), 
+         # for each station and each month we calculate the total rain
+         n_na = sum(is.na(rain)),
+         # for each station and each month we calculate the number of missing values
+         # Make rain_adj = NA if monthly total was 0 and there were no missing values
+         # and otherwise rain_adj = rain
+         # Some of these could be true zeros and could be checked later
+         rain_adj = ifelse(t_rain == 0 & n_na == 0, NA, rain))
+
+zm$rain <- zm$rain_adj
+zm$rain_adj <- NULL
+zm$t_rain <- NULL
+zm$n_na <- NULL
+
+zm <- zm %>%
+  mutate(high_rain = rain > 200,
+         rain = ifelse(high_rain, NA, rain),
+         chirps_rain = ifelse(high_rain, NA, chirps_rain))
+zm$high_rain <- NULL
+```
+
+```{r data_formats}
 zm_long_st <- zm %>% 
   melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
                    "doy", "s_doy"),
@@ -132,7 +113,6 @@ zm_long_st <- zm %>%
        variable.name = "product", value.name = "pr_rain")
 
 
-# view (zm_long_st)
 #the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
 
 #creates a rainday column where the values are true or false depending on if there is rain that day or not
@@ -141,42 +121,28 @@ zm_long <- zm %>%
        measure.vars = names(zm)[endsWith(names(zm), "rain")],
        variable.name = "product", value.name = "rain") %>%
   mutate(rainday = rain > 1)
- view(zm_long)
-
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-stations <- c( "cap_haitien","quanaminthe", "jeremie", "damien", "petitionville", "jacmel", "les_cayes") #north to south would be a better order for these 
+stations <- c( "cap_haitien", "quanaminthe", "jeremie", "damien", "petitionville", 
+               "jacmel", "les_cayes") #north to south would be a better order for these 
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
- view(zm_long)
 
-metadata_station <- read.csv(here("daily_metadata.csv"))
+metadata_station <- read.csv(here("data", "daily_metadata.csv"))
 
+metadata_station$station <- factor(metadata_station$station, levels = stations) #making the 
 
-# view(metadata_station)
-
-
-view(zm_long)
-metadata_station$station <- factor(metadata_station$station, levels = stations) #making the station column a factor and setting the levels 
-# view (metadata_station)
 zm_long$station <- factor(zm_long$station, levels = stations)
-# view(zm_long)
+
 by_station <- zm_long %>%
   group_by(station) %>%
   filter(!is.na(rain)) %>%
   summarise(first_date = first(date), #this line of code seems to be giving the same last date for all our data 
             last_date = last(date))
 
- view(by_station)
-
-
 metadata_station <- left_join(metadata_station, by_station, by = "station")
-
- view(metadata_station) #get rid of column x 
 rm(by_station)
-
-
 
 skable <- function(kable_input) {
   kable_input %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
@@ -200,25 +166,24 @@ metadata_station %>%
 
 
 ```{r station_map, fig.width=9, fig.height=4.5}
-hti_admbnda_adm0_cnigs_20181129 <- sf::st_read(quiet=TRUE, dsn="C:/Users/User/OneDrive - Nexus365/Documents/Downloads/hti_adm_cnigs_20181129/hti_admbnda_adm0_cnigs_20181129.shp") %>% 
-  dplyr::mutate(lon=purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]), lat=purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]])) #reading the shape file
+hti_admbnda_adm0_cnigs_20181129 <- 
+  sf::st_read(quiet=TRUE, 
+              dsn = here("data", "hti_adm_cnigs_20181129",  
+                         "hti_admbnda_adm0_cnigs_20181129.shp")) %>%
+  dplyr::mutate(lon = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]),
+                lat = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]]))
 
-
-#reading the shape file
-
-
-locs <- read.csv(here("C:/Users/User/OneDrive - Nexus365/Documents/Idems data/daily_metadata.csv"))
+locs <- read.csv(here("data", "daily_metadata.csv"))
 width <- 0.05
 
-last_map <- ggplot2::ggplot() +
-  ggplot2::geom_sf(data = hti_admbnda_adm0_cnigs_20181129,  mapping=ggplot2::aes()) + 
+ggplot2::ggplot() +
+  ggplot2::geom_sf(data = hti_admbnda_adm0_cnigs_20181129, 
+                   mapping=ggplot2::aes()) + 
   theme_grey() +
   geom_point(data = locs, aes(x = longitude, y = latitude), colour = "black") +
   
- geom_text_repel(data = locs, aes(x = var1, y = var2, label = station, fontface = "italic"), colour = "black", size = 3) 
- 
-last_map
- 
+ geom_text_repel(data = locs, aes(x = var1, y = var2, label = station, fontface = "italic"), 
+                 colour = "black", size = 3) 
 ```
 
 ```{r gof_fun}
@@ -238,16 +203,11 @@ names(comp_stats) <- c("Correlation coefficient (1 = Perfect)",
                        "Ratio of standard deviations (< 1 less variable, > 1 more variable)")
 
 comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
-
-
 ```
 
 ## Yearly Comparisons (August to July)
 
 ```{r yearly_calcs}
-# view (zm_long) ##this output has been fixed
-view(zm_long)
-
 quality_control <- zm_long %>% 
   group_by(syear,station,month) %>% 
   summarise(
@@ -255,55 +215,39 @@ quality_control <- zm_long %>%
     
   )
 
-
-
-
-
-
-
-view(quality_control)
 by_syear <- zm_long %>%
   group_by(syear,station,product) %>%
-  summarise(total_rain = sum(naif_nmin(rain, 355)),
-            n_rain = sum(naif_nmin(rain, 355) > 0.1),
-            max_rain = max(naif_nmin(rain, 350)),
+  summarise(total_rain = sum(naif_nmin(rain, 330)),
+            n_rain = sum(naif_nmin(rain, 330) > 0.1),
+            max_rain = max(naif_nmin(rain, 330)),
             mean_rain = total_rain/n_rain,
-            n_na = sum(is.na(rain)),
-            
-            
+            n_na = sum(is.na(rain))
 )
-
-view (by_syear)
-# view (by_syear) #seem to have the columns , nrain , max rain etc that we need later on
 
 by_syear_st <- by_syear %>%  #changed from zm_long to by_syear 
   pivot_wider(id_cols = c(station, syear),
               names_from = product, values_from = total_rain:n_na, names_sep = "__") 
 
-
-view (by_syear_st)
-
-
 gof_syear <- by_syear_st %>%  
   group_by(station) %>%
   nest() %>%
   mutate(n = purrr::map_int(data, 
-                       ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain__chirps_rain))), #calculates number of complete years we have 
-         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", "total_rain__station", 
+                       ~sum(!is.na(.$total_rain__station) &
+                              !is.na(.$total_rain__chirps_rain))), 
+         #calculates number of complete years we have 
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
                                       na.rm = TRUE),
-         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", na.rm = TRUE),
-         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", "mean_rain__station", 
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
                                      na.rm = TRUE) 
         
   )
 
-view (gof_syear)
-
 gof_pr <- gof_syear %>% 
   unnest(cols = data)
-gof_pr <- filter(gof_pr, station != "NA") #this line is used to get rid of the NA table , yet to determine where it comes from however
-
-view (gof_pr)
 ```
 
 ```{r yearly_plots_fun}
@@ -367,12 +311,13 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
 
 ### Comparison Statistics for Total Yearly Rainfall
 
-- In general some stations (quanaminthe , les cayes,cap haitien) have some correlation whereas the remaining have little correlation. 
--The mean is estimated best by cap haitien/petitionville and worst by les cayes/Jacmel. 
-- its interesting to note that les cayes has the highest absolute bias but largest correlation. 
-- Station and chirps values for quanaminthe and jeremie are compared for significantly fewer years than the other stations. 
--The relative standard deviation is highest in petitionville and the lowest in Damien
-
+- In general all products follow a similar shape each year (high correlation)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
+- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
+- RFE2 and IMERG look promising across all measures, but few years compared, need the extended station records for better comparison
+- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
+- Slightly less variability in all products, between 70% - 90% (apart from RFE2 which has roughly the same variability)
+- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_total_plots}
 
@@ -380,7 +325,7 @@ yearly_plots(gof_pr, gof_col = "gof__total_rain",
                         stat_pr = "total_rain__chirps_rain", 
                         stat_st = "total_rain__station")
 
-ggsave(here("syear_total_rain.png"), width = 12, height = 6)
+ggsave(here("results", "syear_total_rain.png"), width = 12, height = 6)
 
 ```
 
@@ -398,19 +343,20 @@ stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 
 ### Comparison Statistics for Number of rainy days
 
--Very little correlation overall with ranges from -0.25 to 0.35 with many stations closer to 0
-- The first 4 or so stations have little positive bias so the chirps data overestimates the station data whereas the last three have slightly higher absolute bias though it is more negative. 
+- Reasonably good correlation across the products, so similar pattern each year
+- All products overestimate number of rainy days with the same threshold
+- Wide variation of the bias amount across products, ERA5 has largest bias, CHIPS has lowest
+- Almost the same variability for all products
+- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r yearly_n_rain_plots}
-
-view (gof_pr)
 
 yearly_plots(gof_pr, gof_col = "gof__n_rain", #provides all the data in bold above the plot 
              
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station")
 
-ggsave(here("syear_n_rain.png"), width = 12, height = 6)
+ggsave(here("results", "syear_n_rain.png"), width = 12, height = 6)
 
 #want to change the y axis to read n_rain instead of chirps
 ```
@@ -421,7 +367,7 @@ view(gof_syear)
 stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
 ```
 
-## Monthly Comparisons (November to April)
+## Monthly Comparisons
 
 ```{r monthly_calcs}
 by_month <- zm_long %>%
@@ -430,13 +376,20 @@ by_month <- zm_long %>%
   summarise(total_rain = sum(naif_nmin(rain, 25)),  
             n_rain = sum(naif_nmin(rain, 25) > 0.1),  
             max_rain = max(naif_nmin(rain, 20)), 
-            mean_rain = total_rain/n_rain , 
+            mean_rain = ifelse(n_rain == 0, NA, total_rain/n_rain), 
             n_na = sum(is.na(rain))
             )
 
 by_month_st <- by_month %>%
   pivot_wider(id_cols = c(station, syear, month_abb), 
-              names_from = product, values_from = total_rain:n_na, names_sep = "__") 
+              names_from = product, values_from = total_rain:mean_rain, names_sep = "__") 
+#%>%
+ # pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
+  #             names_to = c(".value", "product"), names_sep = "__")
+
+
+
+
 
 
 
@@ -450,25 +403,21 @@ gof_month <- by_month_st %>%
   group_by(station) %>%
   nest() %>%
   mutate(n = purrr::map_int(data, 
-                        ~sum(!is.na(.$total_rain__station) & !is.na(.$total_rain__chirps_rain))),
-         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", "total_rain__station", 
+                        ~sum(!is.na(.$total_rain__station) & 
+                               !is.na(.$total_rain__chirps_rain))),
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
                                       na.rm = TRUE),
-         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", na.rm = TRUE),
-         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", "mean_rain__station", 
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
                                       na.rm = TRUE)
          )
 
 
-view (gof_month)
-
 gof_pr_month <- gof_month %>%
   unnest(cols = data)
-
-gof_pr_month <- filter(gof_pr_month, station != "NA")
-view (gof_pr_month)  
-#%>% 
-  #group_by(product) %>% 
-  n#est()
 ```
 
 ```{r monthly_plots_fun}
@@ -490,54 +439,47 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(1979, 2012)) +
     ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
-    facet_grid(station~month_abb)
+    facet_wrap(~month_abb)
   g
 }
 ```
 
 ### Comparison statistics for total monthly rainfall
--The correlation between the monthly values is mch better than the yearly values. Les cayes and petitionville have high correlation in general. 
--
+- In general all products follow a similar shape each year (high correlation)
+- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
+- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
+- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
+- Slightly less variability in all products, between 80% - 100%
+- Generally higher correlations and better s.d. ratios than yearly totals
+- Results for Mansa are generally different across products, indicating possible issues with the station records
 
 ```{r monthly_plots_total_rain}
 
-view (gof_pr_month)
-
-monthly_plots(gof_pr_month, #provides all the data in bold above the plot 
-             
-                        stat_pr = "total_rain__chirps_rain", 
-                        stat_st = "total_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
-
-ggsave(here("smonth_total_rain.png"), width = 12, height = 6)
-
-
-
-#p_month_total <- gof_pr_month %>%
- # mutate(p = purrr::map(data, monthly_plots, stat_pr = "total_rain", 
-  #                      stat_st = "total_rain__station", product_name = product),
-   #      paths = here("results", "zambia", 
-    #                  paste0("zambia_", "month_", "total_rain", "_", product, ".png")))
-
-#walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
-#walk(p_month_total$p, print)
+for (i in seq_along(stations)) {
+  s <- stations[i]
+  monthly_plots(gof_pr_month %>% filter(station == s), #provides all the data in bold above the plot
+                stat_pr = "total_rain__chirps_rain",
+                stat_st = "total_rain__station", product_name = "CHIRPS") #product_name = a is a dummy variable at the momment
+  ggsave(here("results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
+}
 ```
 
 ```{r monthly_tables_total_rain, results="asis"}
-
-view (gof_month)
 stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
 ```
 
 ### Comparison statistics for number of monthly raindays
-- Correlation sits between -0.08 and 0.45 for all values. Highest correlation is for quanaminthe and the lowest for haitien 
--
+- Generally high correlation for all products
+- As shown in the Markov Chain models, the bias varies across products, between 1 - 14 days per month. ARC2 & CHIRPS lowest (1-2 days), TAMSAT (3 days), IMERG & RFE2 (6-7 days), ERA5 (14 days)
+- Generally the products have the same or slightly higher variability
+
 ```{r monthly_plots_n_rain}
 view(gof_pr_month)
 
 monthly_plots(gof_pr_month, 
              
                         stat_pr = "n_rain__chirps_rain", 
-                        stat_st = "n_rain__station", product_name = "chirps") #product_name = a is a dummy, ask danny variable at the momment
+                        stat_st = "n_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
 
 ggsave(here("smonth_n_rain.png"), width = 12, height = 6)
 
@@ -552,8 +494,7 @@ ggsave(here("smonth_n_rain.png"), width = 12, height = 6)
 ```
 
 ```{r monthly_tables_n_rain, results="asis"}
-stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month" )
-
+stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month")
 ```
 
 ## Markov Chain models of the chance of rain
@@ -573,7 +514,7 @@ stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month" )
 ```{r markov_chain_setup}
 view(zm_long)
 view (zm_long_st)
-zambia_markov <- zm_long_st %>%   #zm_long_st does not have a column name rain, zm does have something similar (chirps vs rain)
+zambia_markov <- zm_long_st %>% 
   filter(!is.na(pr_rain)) %>% #is.na(rain) &
   mutate(  #rainday1 = rain > 0.85,
          pr_rainday1 = pr_rain > 0.85,
@@ -740,7 +681,7 @@ for(i in c(200, 50, 10, 5, 2, 1)) {
 
 ```{r}
 prop_amounts <- zm_long %>%
-  filter(rain > 0.85 & station == "quanaminthe") %>%  #changed station name from "livingstone" to quanaminthe, else ita ll works all right 
+  filter(rain > 0.85 & station == "Livingstone") %>%
   mutate(rain_grps = cut(rain,
                           breaks = c(0, 0.85, 1.1, 2.1, 3.1, 4.1, 5.1, 10, 20, 30, 50, 200),
                           include.lowest = TRUE)) %>%
