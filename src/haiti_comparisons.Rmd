@@ -65,14 +65,11 @@ zm <- zm %>%
          rain_adj = ifelse(month %in% 6:11 && t_rain == 0 && n_na == 0, NA, rain))
 
 view (zm)
-for (i in 1:102270) {
 
-  if (!is.na(zm[[12]][i]) ) {
-    
-    zm[[12]][i] <- zm[[7]][i]
-    }
-}
+zm[["rain_adj"]] <- ifelse(!is.na(zm[["rain_adj"]]), zm[["rain"]], zm[["rain_adj"]])
 
+#in r vectors are generally vectorised so that you do not need a for loop 
+                
 zm <- zm %>% 
   transmute(
     station = station,
@@ -370,13 +367,12 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
 
 ### Comparison Statistics for Total Yearly Rainfall
 
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- RFE2 and IMERG look promising across all measures, but few years compared, need the extended station records for better comparison
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 70% - 90% (apart from RFE2 which has roughly the same variability)
-- Results for Mansa are generally different across products, indicating possible issues with the station records
+- In general some stations (quanaminthe , les cayes,cap haitien) have some correlation whereas the remaining have little correlation. 
+-The mean is estimated best by cap haitien/petitionville and worst by les cayes/Jacmel. 
+- its interesting to note that les cayes has the highest absolute bias but largest correlation. 
+- Station and chirps values for quanaminthe and jeremie are compared for significantly fewer years than the other stations. 
+-The relative standard deviation is highest in petitionville and the lowest in Damien
+
 
 ```{r yearly_total_plots}
 
@@ -402,11 +398,8 @@ stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 
 ### Comparison Statistics for Number of rainy days
 
-- Reasonably good correlation across the products, so similar pattern each year
-- All products overestimate number of rainy days with the same threshold
-- Wide variation of the bias amount across products, ERA5 has largest bias, CHIPS has lowest
-- Almost the same variability for all products
-- Results for Mansa are generally different across products, indicating possible issues with the station records
+-Very little correlation overall with ranges from -0.25 to 0.35 with many stations closer to 0
+- The first 4 or so stations have little positive bias so the chirps data overestimates the station data whereas the last three have slightly higher absolute bias though it is more negative. 
 
 ```{r yearly_n_rain_plots}
 
@@ -444,13 +437,6 @@ by_month <- zm_long %>%
 by_month_st <- by_month %>%
   pivot_wider(id_cols = c(station, syear, month_abb), 
               names_from = product, values_from = total_rain:n_na, names_sep = "__") 
-#%>%
- # pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
-  #             names_to = c(".value", "product"), names_sep = "__")
-
-
-
-
 
 
 
@@ -510,13 +496,8 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
 ```
 
 ### Comparison statistics for total monthly rainfall
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 80% - 100%
-- Generally higher correlations and better s.d. ratios than yearly totals
-- Results for Mansa are generally different across products, indicating possible issues with the station records
+-The correlation between the monthly values is mch better than the yearly values. Les cayes and petitionville have high correlation in general. 
+-
 
 ```{r monthly_plots_total_rain}
 
@@ -548,17 +529,15 @@ stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
 ```
 
 ### Comparison statistics for number of monthly raindays
-- Generally high correlation for all products
-- As shown in the Markov Chain models, the bias varies across products, between 1 - 14 days per month. ARC2 & CHIRPS lowest (1-2 days), TAMSAT (3 days), IMERG & RFE2 (6-7 days), ERA5 (14 days)
-- Generally the products have the same or slightly higher variability
-
+- Correlation sits between -0.08 and 0.45 for all values. Highest correlation is for quanaminthe and the lowest for haitien 
+-
 ```{r monthly_plots_n_rain}
 view(gof_pr_month)
 
 monthly_plots(gof_pr_month, 
              
                         stat_pr = "n_rain__chirps_rain", 
-                        stat_st = "n_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
+                        stat_st = "n_rain__station", product_name = "chirps") #product_name = a is a dummy, ask danny variable at the momment
 
 ggsave(here("smonth_n_rain.png"), width = 12, height = 6)
 
@@ -594,7 +573,7 @@ stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month" )
 ```{r markov_chain_setup}
 view(zm_long)
 view (zm_long_st)
-zambia_markov <- zm_long_st %>% 
+zambia_markov <- zm_long_st %>%   #zm_long_st does not have a column name rain, zm does have something similar (chirps vs rain)
   filter(!is.na(pr_rain)) %>% #is.na(rain) &
   mutate(  #rainday1 = rain > 0.85,
          pr_rainday1 = pr_rain > 0.85,
@@ -761,7 +740,7 @@ for(i in c(200, 50, 10, 5, 2, 1)) {
 
 ```{r}
 prop_amounts <- zm_long %>%
-  filter(rain > 0.85 & station == "Livingstone") %>%
+  filter(rain > 0.85 & station == "quanaminthe") %>%  #changed station name from "livingstone" to quanaminthe, else ita ll works all right 
   mutate(rain_grps = cut(rain,
                           breaks = c(0, 0.85, 1.1, 2.1, 3.1, 4.1, 5.1, 10, 20, 30, 50, 200),
                           include.lowest = TRUE)) %>%
