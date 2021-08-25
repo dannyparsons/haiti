@@ -66,12 +66,14 @@ zm <- zm %>% mutate(doy = yday_366(date),
 
 ```{r monthly_zeros}
 # Look at months with zero total rainfall and no missing values
+
 zm_zero_months <- zm %>%
-  group_by(station, year, month) %>%
+  group_by(station, month,year) %>%
   summarise(t_rain = sum(rain, na.rm = TRUE),
             n_na = sum(is.na(rain))) %>%
-  dplyr::filter(t_rain == 0 & n_na == 0)
+  filter(t_rain == 0 & n_na == 0)%>%
 
+write.csv(here ("zero_months.csv"))
 zm_month <- zm %>%
   group_by(station, year, month) %>%
   summarise(t_rain = sum(rain),
@@ -205,7 +207,7 @@ names(comp_stats) <- c("Correlation coefficient (1 = Perfect)",
 comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
 ```
 
-## Yearly Comparisons (August to July)
+## Yearly Comparisons 
 
 ```{r yearly_calcs}
 quality_control <- zm_long %>% 
@@ -214,6 +216,8 @@ quality_control <- zm_long %>%
     monthly_rain = sum(rain)
     
   )
+view(zm_long)
+
 
 by_syear <- zm_long %>%
   group_by(syear,station,product) %>%
@@ -224,7 +228,7 @@ by_syear <- zm_long %>%
             n_na = sum(is.na(rain))
 )
 
-by_syear_st <- by_syear %>%  #changed from zm_long to by_syear 
+by_syear_st <- by_syear %>% 
   pivot_wider(id_cols = c(station, syear),
               names_from = product, values_from = total_rain:n_na, names_sep = "__") 
 
@@ -249,6 +253,55 @@ gof_syear <- by_syear_st %>%
 gof_pr <- gof_syear %>% 
   unnest(cols = data)
 ```
+
+## hurricane season comparisons 
+```{r hurricane_season_calc}
+zm_long_h <- filter(zm_long,month %in% c(6:11))
+
+view (zm_long_h)
+
+by_syear_h <- zm_long_h %>%
+  group_by(syear,station,product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 150)),    #since we are dealing with 6 month here instead of the full year i had to change from 330 to 150 
+            n_rain = sum(naif_nmin(rain, 150) > 0.1),
+            max_rain = max(naif_nmin(rain, 150)),
+            mean_rain = total_rain/n_rain,
+            n_na = sum(is.na(rain))
+)
+
+view (by_syear_h)
+
+by_syear_st_h <- by_syear_h %>% 
+  pivot_wider(id_cols = c(station, syear),
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") 
+
+gof_syear_h <- by_syear_st_h %>%  
+  group_by(station)%>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                       ~sum(!is.na(.$total_rain__station) &
+                              !is.na(.$total_rain__chirps_rain))), 
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
+                                     na.rm = TRUE) 
+        
+  )
+
+gof_pr_h <- gof_syear_h %>% 
+  unnest(cols = data)
+
+
+
+
+```
+
+
+
 
 ```{r yearly_plots_fun}
 yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
@@ -311,16 +364,12 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
 
 ### Comparison Statistics for Total Yearly Rainfall
 
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias).
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- RFE2 and IMERG look promising across all measures, but few years compared, need the extended station records for better comparison
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 70% - 90% (apart from RFE2 which has roughly the same variability)
-- Results for Mansa are generally different across products, indicating possible issues with the station records
+- Correlation between the station and chirps value goes from a (absolute) low of 0.01 for petitionville to a high  of 0.67 for les cayes.We can see that correlation is on the Low side for most stations. This likely means that we would have difficulty using the chirps as a predictor 
+-The (absolute) bias is quite low for the stations cap Haitian , Quanaminthe, Jeremie and Petitionville with all of them within a 100. It is highest for les cayes which has a bias of -680. We might be able to use the chirps data with the stations that have a lower bias to get an idea of how much rainfall there is. 
+-It is worth  noting that Jacmel has 38 years of comparison and Jeremie has only 18 with the rest of the stations distributed between those 2 values. 
+-
 
 ```{r yearly_total_plots}
-
 yearly_plots(gof_pr, gof_col = "gof__total_rain", 
                         stat_pr = "total_rain__chirps_rain", 
                         stat_st = "total_rain__station")
@@ -328,6 +377,7 @@ yearly_plots(gof_pr, gof_col = "gof__total_rain",
 ggsave(here("results", "syear_total_rain.png"), width = 12, height = 6)
 
 ```
+
 
 ```{r yearly_n_obs, results="asis"}
 gof_syear %>% 
@@ -343,15 +393,12 @@ stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 
 ### Comparison Statistics for Number of rainy days
 
-- Reasonably good correlation across the products, so similar pattern each year
-- All products overestimate number of rainy days with the same threshold
-- Wide variation of the bias amount across products, ERA5 has largest bias, CHIPS has lowest
-- Almost the same variability for all products
-- Results for Mansa are generally different across products, indicating possible issues with the station records
-
+-Correlation on the whole is very low between chirps and station values across all the stations 
+-The bias is quite low for the same sort of stations when we looked at total rainfall (cap Haitian,Quanaminthe,Jeremie,Damien,Petitionille)
+-One anomalous result that requires further inspection is the very high number of rain days that we have for les cayes in the years 1995-2000. A further inspection of those values is needed. 
 ```{r yearly_n_rain_plots}
 
-yearly_plots(gof_pr, gof_col = "gof__n_rain", #provides all the data in bold above the plot 
+yearly_plots(gof_pr, gof_col = "gof__n_rain", 
              
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station")
@@ -365,6 +412,40 @@ ggsave(here("results", "syear_n_rain.png"), width = 12, height = 6)
 
 view(gof_syear)
 stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
+```
+
+## hurricane season comparisons (total rainfall)
+``` {r hurricane_season_plots}
+
+yearly_plots(gof_pr_h, gof_col = "gof__total_rain", 
+                        stat_pr = "total_rain__chirps_rain", 
+                        stat_st = "total_rain__station")
+
+ggsave(here("results", "syear_total_rain_h.png"), width = 12, height = 6)
+
+
+```
+
+
+```{r yearly_total_rain_tables, results="asis"}
+stats_tables(gof_syear_h, "gof__total_rain", name = "Total Yearly Rainfall")
+```
+
+``` {r hurricane_season_n_rain_plots }
+
+yearly_plots(gof_pr_h, gof_col = "gof__n_rain", 
+             
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station")
+
+ggsave(here("results", "syear_n_rain_h.png"), width = 12, height = 6)
+
+
+```
+
+```{r yearly_n_rain_tables, results="asis"}
+
+stats_tables(gof_syear_h, "gof__n_rain", name = "number of rain days ")
 ```
 
 ## Monthly Comparisons
@@ -383,21 +464,7 @@ by_month <- zm_long %>%
 by_month_st <- by_month %>%
   pivot_wider(id_cols = c(station, syear, month_abb), 
               names_from = product, values_from = total_rain:mean_rain, names_sep = "__") 
-#%>%
- # pivot_longer(cols = -c(station, syear, month_abb, ends_with("station")), 
-  #             names_to = c(".value", "product"), names_sep = "__")
 
-
-
-
-
-
-
-by_month_st$mean_rain__station[is.nan(by_month_st$mean_rain__station)]<-0     #our mean rain solution comes out undetermined when the number of rain days and the total rain are 0
-by_month_st$mean_rain__chirps_rain[is.nan(by_month_st$mean_rain__chirps_rain)]<-0
-by_month_st$mean_rain__station[is.infinite(by_month_st$mean_rain__station)]<-0     #our mean rain solution comes out undetermined when the number of rain days and the total rain are 0
-by_month_st$mean_rain__chirps_rain[is.infinite(by_month_st$mean_rain__chirps_rain)]<-0
-view (by_month_st)
 
 gof_month <- by_month_st %>%
   group_by(station) %>%
@@ -421,14 +488,20 @@ gof_pr_month <- gof_month %>%
 ```
 
 ```{r monthly_plots_fun}
-monthly_plots <- function(df, stat_pr, stat_st, product_name) {
+monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
+  max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
   vals_relace <- c(product_name, "station")
   names(vals_relace) <- c(stat_pr, stat_st)
   dat <- df %>% 
     filter(month_abb %in% month.abb[c(1:12)]) %>%
     pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
-    mutate(product = recode(product, !!!vals_relace))
+    mutate(product = recode(product, !!!vals_relace),
+           ME = purrr::map_dbl(.data[[gof_col]], "ME"),
+           r = purrr::map_dbl(.data[[gof_col]], "r"),
+           rSD = purrr::map_dbl(.data[[gof_col]], "rSD"))
 
+  
+  
   mean_df <- dat %>% 
     group_by(station, product, month_abb) %>% 
     summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
@@ -438,6 +511,24 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
     geom_point() +
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(1979, 2012)) +
+     # n
+    geom_text(data = dat, aes(label = paste("n", n, sep = "  ")), size = 4,
+              x = 1979, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE)  +
+    
+    # bias
+    geom_text(data = dat, aes(label = paste("bias", signif(ME, 2), sep = "  ")), 
+              size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # cor
+    geom_text(aes(label = paste("cor", round(r, 2), sep = "  ")), 
+              size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE)  +
+    # rSD
+    geom_text(aes(label = paste("rSD", round(rSD, 2), sep = "  ")), 
+              size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    
     ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
     facet_wrap(~month_abb)
   g
@@ -445,21 +536,21 @@ monthly_plots <- function(df, stat_pr, stat_st, product_name) {
 ```
 
 ### Comparison statistics for total monthly rainfall
-- In general all products follow a similar shape each year (high correlation)
-- All products, apart from ERA5, estimate the mean quite well (low bias and low percentage bias), with a very slight underestimation compared to yearly totals
-- ERA5 overestimates (high bias) but could be expected as it represents the largest area.
-- Aside from RFE2 and IMERG, CHIRPS performs well over all measures
-- Slightly less variability in all products, between 80% - 100%
-- Generally higher correlations and better s.d. ratios than yearly totals
-- Results for Mansa are generally different across products, indicating possible issues with the station records
+-For Cap Haitian , on the whole the bias is quite low with peaks in January and may 
+-Damien also has low biases except for March , April and Oct
+-The biases in Jacmel tend to be higher between the months of April and November 
+-Biases in Jeremie are on the low side, except for the month March
+-Les cayes has very little rainfall between December and April so or chirps data is always overestimating, biases on the whole are quite low and there are no immediate outliers. 
+-For petitionville we have very little station rain between December and march, October 2003/2004 seems to have an outlying value of total rain
+-For quanaminthe, the biases are in general quite low with slightly larger ones for May. We have some outlying station values , most notably Jan 2008/2009 and Nov 2012/2013 where the station value seems very out of line with the chirps estimate
+
 
 ```{r monthly_plots_total_rain}
-
 for (i in seq_along(stations)) {
   s <- stations[i]
-  monthly_plots(gof_pr_month %>% filter(station == s), #provides all the data in bold above the plot
-                stat_pr = "total_rain__chirps_rain",
-                stat_st = "total_rain__station", product_name = "CHIRPS") #product_name = a is a dummy variable at the momment
+  monthly_plots(gof_pr_month %>% filter(station == s),
+                stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
+                stat_st = "total_rain__station", product_name = "CHIRPS")
   ggsave(here("results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
 }
 ```
@@ -469,62 +560,50 @@ stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
 ```
 
 ### Comparison statistics for number of monthly raindays
-- Generally high correlation for all products
-- As shown in the Markov Chain models, the bias varies across products, between 1 - 14 days per month. ARC2 & CHIRPS lowest (1-2 days), TAMSAT (3 days), IMERG & RFE2 (6-7 days), ERA5 (14 days)
-- Generally the products have the same or slightly higher variability
+-For Cap Haitian the bias is quite low between December and April, it is quite a bit larger during the remaining months and especially during July , August and November. 
+-For Damien, the bias is fairly low between October and February where it starts to increase. The months July and April have particularly high biases. 
+- For Jacmel we get that the bias is particularly high for the months March, April and May.
+-For jeremie the bias is generally low with perhaps the exception of August where is is a bit higher than other places.
+-Les cayes has a small amount of (chirps) raindays between Dec and April and this leads to high biases in those months.The highest biases are in the months April and May. 
+-For petitionville, the biases vary considerably and none of them are clear outliers. Around may 1993 we see that it rained every day of the month for this station and that stands out a bit so perhaps further inspection of that would be a good idea.
+-The biases for quanaminthe tend to be considerable higher in the months July and August. 
 
 ```{r monthly_plots_n_rain}
-view(gof_pr_month)
 
-monthly_plots(gof_pr_month, 
-             
+for (i in seq_along(stations)) {
+  s <- stations[i]
+
+monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
                         stat_pr = "n_rain__chirps_rain", 
-                        stat_st = "n_rain__station", product_name = "a") #product_name = a is a dummy variable at the momment
+                        stat_st = "n_rain__station", product_name = "CHIRPS")  
 
-ggsave(here("smonth_n_rain.png"), width = 12, height = 6)
+ggsave(here("results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
+}
 
-#p_month_total <- gof_pr_month %>%
- # mutate(p = purrr::map(data, monthly_plots, stat_pr = "n_rain", 
-  #                      stat_st = "n_rain__station", product_name = product),
-   #      paths = here("results", "zambia", 
-    #                  paste0("zambia_", "month_", "n_rain", "_", product, ".png")))
-
-#walk2(p_month_total$paths, p_month_total$p, ggsave, width = 12, height = 6)
-#walk(p_month_total$p, print)
 ```
 
 ```{r monthly_tables_n_rain, results="asis"}
 stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month")
 ```
-
 ## Markov Chain models of the chance of rain
 
-- All products model the same shape of chance of rain
-- All overestimate the chance of rain
-- With a higher rain day threshold on the product data the probabilities can be made to match very closely
-- Threshold between 2 and 5 mm depending on the product
-     - ARC2: 4mm
-     - CHIRPS: 4-5mm
-     - ERA5: > 5mm
-     - IMERG: 2-4mm
-     - RFE2: 4mm
-     - TAMSAT: 5mm
-- The optimum threshold may depend on the station
+- All the stations have a model for rain that is roughly the same so that the peaks and troughs occur at the same point in the year.
+- While the station rain is predicted to have two peaks, the chirps model looks like it has one peak in Aug-Sep. 
+- For most stations the probabilities tend to be closer for the months Oct-Dec
+-Threshold 5 seems to improve the fit to the station for Quanaminthe and Cap Haitian however it does not make much of a difference to the remaining stations. 
+-
 
 ```{r markov_chain_setup}
 view(zm_long)
 view (zm_long_st)
-zambia_markov <- zm_long_st %>% 
-  filter(!is.na(pr_rain)) %>% #is.na(rain) &
-  mutate(  #rainday1 = rain > 0.85,
-         pr_rainday1 = pr_rain > 0.85,
-         pr_rainday3 = pr_rain > 3,
-         pr_rainday4 = pr_rain > 4,
-         pr_rainday5 = pr_rain > 5,
-         pr_rainday2max = pr_rain > 1 & pr_rain <= 2,
-         pr_rainday3max = pr_rain > 1 & pr_rain <= 3,
-         pr_rainday4max = pr_rain > 1 & pr_rain <= 4,
-         pr_rainday5max = pr_rain > 1 & pr_rain <= 5)
+zambia_markov <- zm %>% 
+  filter(!is.na(chirps_rain) & !is.na(rain)) %>%
+  mutate(rainday1 = rain > 0.85,
+         pr_rainday1 = chirps_rain > 0.85,
+         pr_rainday2 = chirps_rain > 2,
+         pr_rainday3 = chirps_rain > 3,
+         pr_rainday4 = chirps_rain > 4,
+         pr_rainday5 = chirps_rain > 5)
 
 f_zero_order_station <- rainday1 ~ (cos(s_doy * 1 * 2 * pi/366) +
                                     sin(s_doy * 1 * 2 * pi/366) + 
@@ -535,72 +614,38 @@ f_zero_order_station <- rainday1 ~ (cos(s_doy * 1 * 2 * pi/366) +
 f_zero_order_product <- update.formula(f_zero_order_station, pr_rainday1 ~ .)
 
 predict_stack_lst <- list()
-for(s in seq_along(stations)) {
+
+for(s in seq_along(stations)) {  
   predict_df <- data.frame(station = stations[s], s_doy = 1:366,
-                           s_doy_date = as.Date(1:366, origin = as.Date("1999/07/31")))
+                           s_doy_date = as.Date(1:366, origin = as.Date("1999/12/31")))
   dat <- zambia_markov %>%
     filter(station == stations[s])
-  for(i in seq_along(products)) {
-    dat_prod <- dat %>%
-      filter(product %in% c("station", products[i])) %>% 
-      filter(!is.na(rain) & !is.na(pr_rain))
-    zero_order_station <- glm(f_zero_order_station, data = dat_prod, family = binomial)
-    zero_order_product <- glm(f_zero_order_product, data = dat_prod, family = binomial)
-    #print(anova(zero_order_station, test="Chisq"))
-    predict_df[[paste0("station", "_", products[i])]] <- predict(zero_order_station, 
-                                                                 newdata = predict_df, 
-                                                                 type = "response")
-    predict_df[[products[i]]] <- predict(zero_order_product, newdata = predict_df, 
+
+  zero_order_station <- glm(f_zero_order_station, data = dat, family = binomial)
+  zero_order_product <- glm(f_zero_order_product, data = dat, family = binomial)
+  #print(anova(zero_order_station, test="Chisq"))
+  predict_df[["station_fit"]] <- predict(zero_order_station, newdata = predict_df,
                                          type = "response")
-    
-    f_zero_order_product_3thres <- update.formula(f_zero_order_station, pr_rainday3 ~ .)
-    f_zero_order_product_4thres <- update.formula(f_zero_order_station, pr_rainday4 ~ .)
-    f_zero_order_product_5thres <- update.formula(f_zero_order_station, pr_rainday5 ~ .)
-    f_zero_order_product_2max <- update.formula(f_zero_order_station, pr_rainday2max ~ .)
-    f_zero_order_product_3max <- update.formula(f_zero_order_station, pr_rainday3max ~ .)
-    f_zero_order_product_4max <- update.formula(f_zero_order_station, pr_rainday4max ~ .)
-    f_zero_order_product_5max <- update.formula(f_zero_order_station, pr_rainday5max ~ .)
-    fms <- list(f_zero_order_product_2max, f_zero_order_product_3max, 
-                f_zero_order_product_4max, f_zero_order_product_5max)
-    fms_thres <- list(f_zero_order_product_3thres, f_zero_order_product_4thres,
-                      f_zero_order_product_5thres)
-    mds <- list()
-    for(j in 2:(2 + length(fms) - 1)) {
-      zero_order <- glm(fms[[j - 1]], data = dat_prod, family = binomial)
-      predict_df[[paste0(products[i], "_", j, "max")]] <- predict(zero_order, 
-                                                                  newdata = predict_df, 
-                                                                  type = "response")
-    }
-    for(j in 3:(3 + length(fms_thres) - 1)) {
-      zero_order <- glm(fms_thres[[j - 2]], data = dat_prod, family = binomial)
-      predict_df[[paste0(products[i], "_", j, "thres")]] <- predict(zero_order, 
-                                                                    newdata = predict_df, 
-                                                                    type = "response")
-    }
-  }
+  predict_df[["chirps_fit"]] <- predict(zero_order_product, newdata = predict_df,
+                                        type = "response")
   
+  f_zero_order_product_2thres <- update.formula(f_zero_order_station, pr_rainday2 ~ .)
+  f_zero_order_product_3thres <- update.formula(f_zero_order_station, pr_rainday3 ~ .)
+  f_zero_order_product_4thres <- update.formula(f_zero_order_station, pr_rainday4 ~ .)
+  f_zero_order_product_5thres <- update.formula(f_zero_order_station, pr_rainday5 ~ .)
+  fms_thres <- list(f_zero_order_product_2thres, f_zero_order_product_3thres,
+                    f_zero_order_product_4thres, f_zero_order_product_5thres)
+  for(j in seq_along(fms_thres)) {
+    zero_order <- glm(fms_thres[[j]], data = dat, family = binomial)
+    predict_df[[paste0("chirps", "_", j + 1, "thres")]] <- predict(zero_order,
+                                                                   newdata = predict_df,
+                                                                   type = "response")
+  }
+
   predict_stack <- predict_df %>% melt(id.vars = c("station", "s_doy", "s_doy_date"), 
                                        variable.name = "product", value.name = "prob")
 
   predict_stack$product <- as.character(predict_stack$product)
-  predict_stack$product2 <- predict_stack$product
-  predict_stack$type <- "product1"
-  
-  predict_stack <- predict_stack %>% 
-    mutate(type = ifelse(startsWith(product, "station"), "station1", type),
-           type = ifelse(endsWith(product, "max"), 
-                         substr(product, nchar(product) - 3, nchar(product)), type),
-           type = ifelse(endsWith(product, "thres"), 
-                         substr(product, nchar(product) - 5, nchar(product)), type),
-           product2 = ifelse(startsWith(product, "station"), 
-                             substr(product, 9, nchar(product)), product2),
-           product2 = ifelse(endsWith(product, "max"), 
-                             substr(product, 1, nchar(product) - 5), product2),
-           product2 = ifelse(endsWith(product, "thres"), 
-                             substr(product, 1, nchar(product) - 7), product2)
-           )
-  
-  predict_stack$type <- factor(predict_stack$type, levels = unique(predict_stack$type))
   predict_stack_lst[[length(predict_stack_lst) + 1]] <- predict_stack
   # Plot small amounts
   # g <- ggplot(predict_stack, aes(x = s_doy, y = prob, colour = type)) +
@@ -612,43 +657,36 @@ for(s in seq_along(stations)) {
   #        plot = g, width = 12, height = 6)
 }
 predict_stack_all <- bind_rows(predict_stack_lst)
+predict_stack_all$product <- factor(predict_stack_all$product)
+predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
 ```
 
-```{r markov_chain_plots_stations}
-for(s in seq_along(stations)) {
-  dat <- predict_stack_all %>% filter(station == stations[s] & !grepl("max", type))
-  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = type, size = type)) +
+```{r markov_chain_plots}
+  dat <- predict_stack_all %>% filter(product %in% c("station_fit", "chirps_fit"))
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product, size = product)) +
     geom_line() +
-    facet_wrap(~product2) +
+    facet_wrap(~station) +
     scale_size_manual(values = c(0.8, rep(0.6, 4))) +
     scale_color_manual(values = c("black", c25[1:4])) +
     scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-    ggtitle(paste("Chance of rain:", stations[s]))
+    ggtitle(paste("Chance of rain"))
   print(g)
-  ggsave(here("results", "zambia", 
-              paste0("zambia_", "markov_zero", "_station_", stations[s], ".png")),
+  ggsave(here("results", paste0("markov_zero.png")),
          plot = g, width = 12, height = 6)
-}
 ```
 
-```{r markov_chain_plots_products}
-for(s in seq_along(products)) {
-  dat <- predict_stack_all %>% 
-    filter(product2 == products[s] & !grepl("max", type))
-  g <- ggplot(dat, aes(x = s_doy_date, y = prob, 
-                       colour = type, size = type, linetype = type)) +
+```{r markov_chain_plots_thresh}
+  dat <- predict_stack_all
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product, size = product)) +
     geom_line() +
     facet_wrap(~station) +
-    scale_color_manual(values = c("black", viridis(4, end = 0.8))) +
-    scale_size_manual(values = c(1.3, rep(0.8, 4))) +
+    scale_size_manual(values = c(0.8, rep(0.6, 5))) +
+    scale_color_manual(values = c("black", c25[1:5])) +
     scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-    scale_linetype_manual(values = c("solid", rep("longdash", 4))) +
-    ggtitle(paste("Chance of rain:", products[s]))
+    ggtitle(paste("Chance of rain"))
   print(g)
-  ggsave(here("results", "zambia", 
-              paste0("zambia_", "markov_zero", "_product_", names(products)[s], ".png")),
+  ggsave(here("results", paste0("markov_zero_threshs.png")),
          plot = g, width = 12, height = 6)
-}
 ```
 
 ### Distribution of rainfall amounts
@@ -711,11 +749,11 @@ prop_amounts %>%
 - Performance will change if different thresholds are introduced
 
 ```{r raindays_verify}
-raindays <- zm_long_st %>% 
+raindays <- zm %>% 
   mutate(st_rainday0p85 = rain > 0.85,
-         pr_rainday0p85 = pr_rain > 0.85,
-         pr_rainday3 = pr_rain > 3,
-         pr_rainday5 = pr_rain > 5)
+         pr_rainday0p85 = chirps_rain > 0.85,
+         pr_rainday3 = chirps_rain > 3,
+         pr_rainday5 = chirps_rain > 5)
 
 sverify <- function(df, obs, pred) {
   v <- verification::verify(obs = df[[obs]], pred = df[[pred]], 
@@ -727,7 +765,7 @@ sverify <- function(df, obs, pred) {
 by_st_pr <- raindays %>%
   group_by(station, product) %>%
   nest() %>%
-  mutate(v = purrr::map(data, sverify, obs = "st_rainday0p85", pred = "pr_rainday0p85"),
+  mutate(v = purrr::map(data, sverify, obs = "st_rainday0p85", pred = "pr_rainday0p85"),  #column product not found
          bias = purrr::map_dbl(v, "BIAS"))
 ```
 
