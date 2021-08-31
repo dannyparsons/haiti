@@ -73,7 +73,7 @@ zm_zero_months <- zm %>%
             n_na = sum(is.na(rain))) %>%
   filter(t_rain == 0 & n_na == 0)%>%
 
-write.csv(here ("zero_months.csv"))
+write.csv(here("results", "zero_months.csv"))
 zm_month <- zm %>%
   group_by(station, year, month) %>%
   summarise(t_rain = sum(rain),
@@ -228,8 +228,6 @@ quality_control <- zm_long %>%
     monthly_rain = sum(rain)
     
   )
-view(zm_long)
-
 
 by_syear <- zm_long %>%
   group_by(syear,station,product) %>%
@@ -268,9 +266,7 @@ gof_pr <- gof_syear %>%
 
 ## hurricane season comparisons 
 ```{r hurricane_season_calc}
-zm_long_h <- filter(zm_long,month %in% c(6:11))
-
-view (zm_long_h)
+zm_long_h <- filter(zm_long, month %in% c(6:11))
 
 by_syear_h <- zm_long_h %>%
   group_by(syear,station,product) %>%
@@ -280,8 +276,6 @@ by_syear_h <- zm_long_h %>%
             mean_rain = total_rain/n_rain,
             n_na = sum(is.na(rain))
 )
-
-view (by_syear_h)
 
 by_syear_st_h <- by_syear_h %>% 
   pivot_wider(id_cols = c(station, syear),
@@ -306,10 +300,6 @@ gof_syear_h <- by_syear_st_h %>%
 
 gof_pr_h <- gof_syear_h %>% 
   unnest(cols = data)
-
-
-
-
 ```
 
 
@@ -387,7 +377,6 @@ yearly_plots(gof_pr, gof_col = "gof__total_rain",
                         stat_st = "total_rain__station")
 
 ggsave(here("results", "syear_total_rain.png"), width = 12, height = 6)
-
 ```
 
 
@@ -409,20 +398,16 @@ stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 -The bias is quite low for the same sort of stations when we looked at total rainfall (cap Haitian,Quanaminthe,Jeremie,Damien,Petitionille)
 -One anomalous result that requires further inspection is the very high number of rain days that we have for les cayes in the years 1995-2000. A further inspection of those values is needed. 
 ```{r yearly_n_rain_plots}
-
 yearly_plots(gof_pr, gof_col = "gof__n_rain", 
              
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station")
 
 ggsave(here("results", "syear_n_rain.png"), width = 12, height = 6)
-
 #want to change the y axis to read n_rain instead of chirps
 ```
 
 ```{r yearly_n_rain_tables, results="asis"}
-
-view(gof_syear)
 stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
 ```
 
@@ -434,29 +419,23 @@ yearly_plots(gof_pr_h, gof_col = "gof__total_rain",
                         stat_st = "total_rain__station")
 
 ggsave(here("results", "syear_total_rain_h.png"), width = 12, height = 6)
-
-
 ```
 
 
-```{r yearly_total_rain_tables, results="asis"}
+```{r yearly_total_rain_tables_h, results="asis"}
 stats_tables(gof_syear_h, "gof__total_rain", name = "Total Yearly Rainfall")
 ```
 
 ``` {r hurricane_season_n_rain_plots }
-
 yearly_plots(gof_pr_h, gof_col = "gof__n_rain", 
              
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station")
 
 ggsave(here("results", "syear_n_rain_h.png"), width = 12, height = 6)
-
-
 ```
 
-```{r yearly_n_rain_tables, results="asis"}
-
+```{r yearly_n_rain_tables_h, results="asis"}
 stats_tables(gof_syear_h, "gof__n_rain", name = "number of rain days ")
 ```
 
@@ -561,10 +540,11 @@ view (gof_pr_month)
 ```{r monthly_plots_total_rain}
 for (i in seq_along(stations)) {
   s <- stations[i]
-  monthly_plots(gof_pr_month %>% filter(station == s),
-                stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
-                stat_st = "total_rain__station", product_name = "CHIRPS")
-  ggsave(here("results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
+  g <- monthly_plots(gof_pr_month %>% filter(station == s),
+                     stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
+                     stat_st = "total_rain__station", product_name = "CHIRPS")
+  print(g)
+  ggsave(here("results", paste0("month_total_rain_", s, ".png")), g, width = 12, height = 6)
 }
 ```
 
@@ -607,8 +587,6 @@ stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month")
 -
 
 ```{r markov_chain_setup}
-view(zm_long)
-view (zm_long_st)
 zambia_markov <- zm %>% 
   filter(!is.na(chirps_rain) & !is.na(rain)) %>%
   mutate(rainday1 = rain > 0.85,
@@ -702,6 +680,7 @@ predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
          plot = g, width = 12, height = 6)
 ```
 
+<<<<<<< HEAD
 ### Distribution of rainfall amounts
 
 ```{r}
@@ -845,3 +824,5 @@ for(i in seq(measures)) {
 }
 ```
 
+=======
+>>>>>>> 327f028b547ed808ec183848272a1bf9084f3e7b
