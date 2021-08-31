@@ -842,6 +842,7 @@ for(i in seq(measures)) {
                                                    - 5)
   df[nrow(df) + 1, ] <- c(list("(All)"), as.list(as.numeric(colMeans(df[ , -1]))))
   print(cont_tables(df, names(measures)[i]))
+  
 }
 ```
 
