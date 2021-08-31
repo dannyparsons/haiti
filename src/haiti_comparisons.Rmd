@@ -106,6 +106,18 @@ zm <- zm %>%
          chirps_rain = ifelse(high_rain, NA, chirps_rain))
 zm$high_rain <- NULL
 ```
+``` {r quality control}
+
+view (zm)
+
+
+qc1 <- filter (zm, station == "quanaminthe", year %in% c(2019), month %in% c(1))
+#there does not seem to be anything unusual about the high number of raindays in this period 
+view (qc1)
+
+
+```
+
 
 ```{r data_formats}
 zm_long_st <- zm %>% 
@@ -113,7 +125,7 @@ zm_long_st <- zm %>%
                    "doy", "s_doy"),
        measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
        variable.name = "product", value.name = "pr_rain")
-
+view(zm_long)
 
 #the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
 
@@ -480,6 +492,7 @@ gof_month <- by_month_st %>%
          gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
                                      "mean_rain__station", 
                                       na.rm = TRUE)
+         
          )
 
 
@@ -499,9 +512,6 @@ monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
            ME = purrr::map_dbl(.data[[gof_col]], "ME"),
            r = purrr::map_dbl(.data[[gof_col]], "r"),
            rSD = purrr::map_dbl(.data[[gof_col]], "rSD"))
-
-  
-  
   mean_df <- dat %>% 
     group_by(station, product, month_abb) %>% 
     summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
@@ -511,6 +521,8 @@ monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
     geom_point() +
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(1979, 2012)) +
+    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
+    facet_wrap(~month_abb) +
      # n
     geom_text(data = dat, aes(label = paste("n", n, sep = "  ")), size = 4,
               x = 1979, y = max_y, na.rm = TRUE, 
@@ -527,12 +539,13 @@ monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
     # rSD
     geom_text(aes(label = paste("rSD", round(rSD, 2), sep = "  ")), 
               size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
-              inherit.aes = FALSE) +
+              inherit.aes = FALSE) 
     
-    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
-    facet_wrap(~month_abb)
+    
   g
 }
+
+view (gof_pr_month)
 ```
 
 ### Comparison statistics for total monthly rainfall
@@ -749,6 +762,9 @@ prop_amounts %>%
 - Performance will change if different thresholds are introduced
 
 ```{r raindays_verify}
+
+view(zm)
+
 raindays <- zm %>% 
   mutate(st_rainday0p85 = rain > 0.85,
          pr_rainday0p85 = chirps_rain > 0.85,
@@ -763,7 +779,7 @@ sverify <- function(df, obs, pred) {
 }
 
 by_st_pr <- raindays %>%
-  group_by(station, product) %>%
+  group_by(station) %>% #removed product
   nest() %>%
   mutate(v = purrr::map(data, sverify, obs = "st_rainday0p85", pred = "pr_rainday0p85"),  #column product not found
          bias = purrr::map_dbl(v, "BIAS"))
@@ -779,7 +795,7 @@ cont_tables <- function(df, name) {
 
 rain_levs <- c("rain", "no_rain")
 ver_zm <- raindays %>%
-  group_by(product, station) %>%
+  group_by(station) %>% #removed product
   filter(month %in% c(11:12, 1:4)) %>%
   filter(!is.na(st_rainday0p85) & !is.na(pr_rainday0p85)) %>%
   summarise(hit = sum(st_rainday0p85 & pr_rainday0p85),
@@ -799,7 +815,7 @@ ver_zm <- raindays %>%
             hss = verification::verify(obs = st_rainday0p85, pred = pr_rainday0p85, 
                                        obs.type = "binary", frcst.type = "binary")$HSS
             ) %>%
-  arrange(product, station)
+  arrange( station) #removed product
 
 measures <- c("accuracy", "bias", "hit_rate", "far", "ts", "ets", "miss_frac", "hk", "hss")
 names(measures) <- c("Accuracy: What fraction of the estimates were correct?
@@ -816,7 +832,7 @@ names(measures) <- c("Accuracy: What fraction of the estimates were correct?
                      )
 for(i in seq(measures)) {
   df <- ver_zm %>% 
-    select(product, station, measures[[i]]) %>%
+    select(station, measures[[i]]) %>% #removed product
     pivot_wider(id_cols = station, names_from = product, values_from = measures[[i]])
   names(df)[endsWith(names(df), "rain")] <- substr(names(df)[endsWith(names(df), "rain")],
                                                    1, 
