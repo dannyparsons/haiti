@@ -41,8 +41,8 @@ library(sf)
 ```
 
 ```{r setup, include=FALSE}
-source(here("src", "helper_funs.R"))
-zm <- readRDS(here("src", "data", "daily_data_sorted1.RDS"))
+source(here( "helper_funs.R"))
+zm <- readRDS(here( "data", "daily_data_sorted1.RDS"))
 
 zm <- zm$get_data_frame("merge")
 zm <- dplyr::filter(zm, station != "thiotte")
@@ -137,7 +137,7 @@ products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
-metadata_station <- read.csv(here("src", "data", "daily_metadata.csv"))
+metadata_station <- read.csv(here("data", "daily_metadata.csv"))
 
 metadata_station$station <- factor(metadata_station$station, levels = stations) #making the 
 
@@ -176,12 +176,12 @@ metadata_station %>%
 ```{r station_map, fig.width=9, fig.height=4.5}
 hti_admbnda_adm0_cnigs_20181129 <- 
   sf::st_read(quiet=TRUE, 
-              dsn = here("src", "data", "hti_adm_cnigs_20181129",  
+              dsn = here( "data", "hti_adm_cnigs_20181129",  
                          "hti_admbnda_adm0_cnigs_20181129.shp")) %>%
   dplyr::mutate(lon = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]),
                 lat = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]]))
 
-locs <- read.csv(here("src", "data", "daily_metadata.csv"))
+locs <- read.csv(here( "data", "daily_metadata.csv"))
 width <- 0.05
 
 ggplot2::ggplot() +
@@ -423,7 +423,7 @@ ggsave(here("results", "syear_total_rain_h.png"), width = 12, height = 6)
 
 ```
 
-```{r yearly_total_rain_tables, results="asis"}
+```{r yearly_total_rain_tables_h, results="asis"}
 stats_tables(gof_syear_h, "gof__total_rain", name = "Total Yearly Rainfall")
 ```
 
@@ -437,7 +437,7 @@ ggsave(here("results", "syear_n_rain_h.png"), width = 12, height = 6)
 
 ```
 
-```{r yearly_n_rain_tables, results="asis"}
+```{r yearly_n_rain_tables_h, results="asis"}
 stats_tables(gof_syear_h, "gof__n_rain", name = "number of rain days ")
 ```
 
@@ -546,7 +546,7 @@ for (i in seq_along(stations)) {
                 stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
                 stat_st = "total_rain__station", product_name = "CHIRPS")
   
-  ggsave(here("src" , "results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
+  ggsave(here( "results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
 }
 ```
 
@@ -571,7 +571,7 @@ monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station", product_name = "CHIRPS")  
 
-ggsave(here("src", "results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
+ggsave(here( "results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
 }
 
 ```
@@ -664,7 +664,7 @@ predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
     scale_x_date(date_breaks = "2 months", date_labels = "%b") +
     ggtitle(paste("Chance of rain"))
   print(g)
-  ggsave(here("src","results", paste0("markov_zero.png")),
+  ggsave(here("results", paste0("markov_zero.png")),
          plot = g, width = 12, height = 6)
 ```
 
@@ -678,7 +678,7 @@ predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
     scale_x_date(date_breaks = "2 months", date_labels = "%b") +
     ggtitle(paste("Chance of rain"))
   print(g)
-  ggsave(here("src", "results", paste0("markov_zero_threshs.png")),
+  ggsave(here( "results", paste0("markov_zero_threshs.png")),
          plot = g, width = 12, height = 6)
 ```
 
