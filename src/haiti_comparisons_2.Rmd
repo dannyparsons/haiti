@@ -1,0 +1,643 @@
+---
+title: "Haiti Comparisons 2.0"
+author: "Danny"
+date: "11/06/2020"
+output:
+  html_document:
+    fig_width: 12
+    fig_height: 6
+  pdf_document: default
+---
+## summary
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+library (ggspatial)
+library(sf)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+zm <- read.csv(here( "data", "alpha_grouped.csv"))
+zm <- dplyr::filter(zm, station != "thiotte")
+zm$date <- as.Date(zm$date)
+view(zm)
+
+zm <- transmute(zm,
+                station = station,
+                latitde = latitude,
+                longitude = longitude, 
+                date = date, 
+                year = year(date),
+                month = month(date),
+                day = day(date),
+                rain = rain,
+                chirps_rain = chirps_rain_adj
+)
+
+view(zm)
+if(anyDuplicated(zm %>% dplyr::select(station, date))) stop("Duplicates found!")
+
+
+# 1 Jan = 1
+s_doy_start <- 1
+zm <- zm %>% mutate(doy = yday_366(date),
+                    s_doy = (doy - s_doy_start + 1) %% 366,
+                    s_doy = ifelse(s_doy == 0, 366, s_doy),
+                    syear = ifelse(s_doy > (366 - s_doy_start + 1), year - 1, year),
+                    month_abb = month(date, label = TRUE))
+```
+
+```{r monthly_zeros}
+# Look at months with zero total rainfall and no missing values
+
+zm_zero_months <- zm %>%
+  group_by(station, month,year) %>%
+  summarise(t_rain = sum(rain, na.rm = TRUE),
+            n_na = sum(is.na(rain))) %>%
+  filter(t_rain == 0 & n_na == 0)%>%
+
+write.csv(here ("data", "zero_months_adj.csv"))
+zm_month <- zm %>%
+  group_by(station, year, month) %>%
+  summarise(t_rain = sum(rain),
+            n_na = sum(is.na(rain)))
+
+zm_month_wide <- zm_month %>%
+  pivot_wider(id_cols = c(year, month), names_from = station, values_from = t_rain)
+
+zm <- zm %>%
+  # Group by station and month for the calculation
+  group_by(station, year, month) %>%
+  # Add two columns for total monthly rainfall and number of missing values in the month
+  mutate(t_rain = sum(rain, na.rm = TRUE), 
+         # for each station and each month we calculate the total rain
+         n_na = sum(is.na(rain)),
+         # for each station and each month we calculate the number of missing values
+         # Make rain_adj = NA if monthly total was 0 and there were no missing values
+         # and otherwise rain_adj = rain
+         # Some of these could be true zeros and could be checked later
+         rain_adj = ifelse(t_rain == 0 & n_na == 0, NA, rain))
+
+zm$rain <- zm$rain_adj
+zm$rain_adj <- NULL
+zm$t_rain <- NULL
+zm$n_na <- NULL
+
+zm <- zm %>%
+  mutate(high_rain = rain > 200,
+         rain = ifelse(high_rain, NA, rain),
+         chirps_rain = ifelse(high_rain, NA, chirps_rain))
+zm$high_rain <- NULL
+```
+
+```{r data_formats}
+zm_long_st <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", 
+                   "doy", "s_doy"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
+       variable.name = "product", value.name = "pr_rain")
+
+#the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
+
+#creates a rainday column where the values are true or false depending on if there is rain that day or not
+zm_long <- zm %>% 
+  melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", "doy", "s_doy"),
+       measure.vars = names(zm)[endsWith(names(zm), "rain")],
+       variable.name = "product", value.name = "rain") %>%
+  mutate(rainday = rain > 1)
+
+zm_long$product <- recode(zm_long$product, rain = "station")
+stations <- c( "cap_haitien", "quanaminthe", "jeremie", "damien", "petitionville", 
+               "jacmel", "les_cayes") #north to south would be a better order for these 
+products <- levels(zm_long$product)
+products <- products[-1]
+names(products) <- substr(products, 1, nchar(products) - 5)
+
+metadata_station <- read.csv(here("data", "daily_metadata.csv"))
+
+metadata_station$station <- factor(metadata_station$station, levels = stations) #making the 
+
+zm_long$station <- factor(zm_long$station, levels = stations)
+
+by_station <- zm_long %>%
+  group_by(station) %>%
+  filter(!is.na(rain)) %>%
+  summarise(first_date = first(date), #this line of code seems to be giving the same last date for all our data 
+            last_date = last(date))
+
+metadata_station <- left_join(metadata_station, by_station, by = "station")
+rm(by_station)
+
+skable <- function(kable_input) {
+  kable_input %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                                full_width = FALSE)
+}
+```
+
+## Stations
+
+```{r}
+metadata_station %>% 
+  dplyr::select(station, latitude, longitude) %>%   ##may have to add a min year/max year column
+  kable(digits = 2) %>%
+  skable()
+```
+
+
+```{r station_map, fig.width=9, fig.height=4.5}
+hti_admbnda_adm0_cnigs_20181129 <- 
+  sf::st_read(quiet=TRUE, 
+              dsn = here("data", "hti_adm_cnigs_20181129",  
+                         "hti_admbnda_adm0_cnigs_20181129.shp")) %>%
+  dplyr::mutate(lon = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]),
+                lat = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]]))
+
+locs <- read.csv(here("data", "daily_metadata.csv"))
+width <- 0.05
+
+ggplot2::ggplot() +
+  ggplot2::geom_sf(data = hti_admbnda_adm0_cnigs_20181129, 
+                   mapping=ggplot2::aes()) + 
+  theme_grey() +
+  geom_point(data = locs, aes(x = longitude, y = latitude), colour = "black") +
+  
+ geom_text_repel(data = locs, aes(x = var1, y = var2, label = station, fontface = "italic"), 
+                 colour = "black", size = 3) 
+```
+
+```{r gof_fun}
+dgof <- function(df, sim, obs, na.rm = TRUE) {
+  g <- hydroGOF::gof(sim = df[[sim]], obs = df[[obs]], na.rm = na.rm) # how this function is working? 
+  x <- as.list(g)
+  names(x) <- row.names(g)
+  x
+}
+
+comp_stats <- c("r", "ME", "PBIAS %", "MAE", "NSE", "rSD")
+names(comp_stats) <- c("Correlation coefficient (1 = Perfect)",
+                       "Mean bias (same units)",
+                       "Percentage bias (%)",
+                       "Mean absolute bias (same units)",
+                       "Nash-Sutcliffe efficiency (1 = Perfect)",
+                       "Ratio of standard deviations (< 1 less variable, > 1 more variable)")
+
+comp_stats_digits <- c(2, 0, 0, 0, 2, 3)
+```
+
+## Yearly Comparisons 
+
+```{r yearly_calcs}
+quality_control <- zm_long %>% 
+  group_by(syear,station,month) %>% 
+  summarise(
+    monthly_rain = sum(rain)
+    
+  )
+
+by_syear <- zm_long %>%
+  group_by(syear,station,product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 330)),
+            n_rain = sum(naif_nmin(rain, 330) > 0.1),
+            max_rain = max(naif_nmin(rain, 330)),
+            mean_rain = total_rain/n_rain,
+            n_na = sum(is.na(rain))
+)
+
+by_syear_st <- by_syear %>% 
+  pivot_wider(id_cols = c(station, syear),
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") 
+
+gof_syear <- by_syear_st %>%  
+  group_by(station) %>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                       ~sum(!is.na(.$total_rain__station) &
+                              !is.na(.$total_rain__chirps_rain))), 
+         #calculates number of complete years we have 
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
+                                     na.rm = TRUE) 
+        
+  )
+
+gof_pr <- gof_syear %>% 
+  unnest(cols = data)
+```
+
+## hurricane season comparisons 
+
+
+```{r hurricane_season_calc}
+zm_long_h <- filter(zm_long,month %in% c(6:11))
+
+by_syear_h <- zm_long_h %>%
+  group_by(syear,station,product) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 150)),    #since we are dealing with 6 month here instead of the full year i had to change from 330 to 150 
+            n_rain = sum(naif_nmin(rain, 150) > 0.1),
+            max_rain = max(naif_nmin(rain, 150)),
+            mean_rain = total_rain/n_rain,
+            n_na = sum(is.na(rain))
+)
+
+by_syear_st_h <- by_syear_h %>% 
+  pivot_wider(id_cols = c(station, syear),
+              names_from = product, values_from = total_rain:n_na, names_sep = "__") 
+
+gof_syear_h <- by_syear_st_h %>%  
+  group_by(station)%>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                       ~sum(!is.na(.$total_rain__station) &
+                              !is.na(.$total_rain__chirps_rain))), 
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
+                                     na.rm = TRUE) 
+        
+  )
+
+gof_pr_h <- gof_syear_h %>% 
+  unnest(cols = data)
+
+
+```
+
+
+```{r yearly_plots_fun}
+yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
+  max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
+  dat <- df %>% 
+    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
+    mutate(ME = purrr::map_dbl(.data[[gof_col]], "ME"),
+           r = purrr::map_dbl(.data[[gof_col]], "r"),
+           rSD = purrr::map_dbl(.data[[gof_col]], "rSD")
+           )
+  mean_df <- dat %>% 
+    group_by(station, product) %>% 
+    summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
+  g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
+    geom_line() +
+    geom_point() +
+    geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    scale_x_continuous(limits = c(1979, 2012)) +
+    # n
+    geom_text(data = dat, aes(label = paste("n", n)), size = 4,
+              x = 1979, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # bias
+    geom_text(data = dat, aes(label = paste("bias", signif(ME, 2))), 
+              size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # cor
+    geom_text(aes(label = paste("cor", round(r, 2))), 
+              size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    # rSD
+    geom_text(aes(label = paste("rSD", round(rSD, 2))), 
+              size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+              inherit.aes = FALSE) +
+    ggtitle(paste(stat_pr, ":", "CHIRPS", "vs", "station")) +
+    facet_wrap(~station)
+  g
+}
+```
+
+```{r stats_tables_fun}
+stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
+  dat <- df %>% 
+    ungroup()
+  for (i in seq_along(obj_stats)) {
+    dat <- dat %>%
+      mutate(purrr::map_dbl(df[[obj_col]], obj_stats[i]))
+    names(dat)[ncol(dat)] <- obj_stats[i]
+  }
+  dat <- dat %>% 
+    mutate(station = as.character(station))
+  dat <- dat[ , c("station", obj_stats)]
+  dat %>%
+  kable(digits = comp_stats_digits[i], caption = paste("Comparison statistics:", name), 
+        format.args = list(big.mark = ",")) %>%
+  skable() %>%
+  print()
+}
+```
+
+### Comparison Statistics for Total Yearly Rainfall
+
+```{r yearly_total_plots}
+yearly_plots(gof_pr, gof_col = "gof__total_rain", 
+                        stat_pr = "total_rain__chirps_rain", 
+                        stat_st = "total_rain__station")
+
+ggsave(here("results", "syear_total_rain_adj.png"), width = 12, height = 6)
+
+```
+
+
+```{r yearly_n_obs, results="asis"}
+gof_syear %>% 
+  dplyr::select(station, n) %>%
+  kable(caption = "Number of years compared") %>%
+  skable()
+```
+
+```{r yearly_total_rain_tables, results="asis"}
+stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
+```
+
+### Comparison Statistics for Number of rainy days
+
+```{r yearly_n_rain_plots}
+
+yearly_plots(gof_pr, gof_col = "gof__n_rain", 
+             
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station")
+ggsave(here("results", "syear_n_rain_adj.png"), width = 12, height = 6)
+#want to change the y axis to read n_rain instead of chirps
+```
+
+```{r yearly_n_rain_tables, results="asis"}
+stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
+```
+
+## hurricane season comparisons (total rainfall)
+``` {r hurricane_season_plots}
+
+yearly_plots(gof_pr_h, gof_col = "gof__total_rain", 
+                        stat_pr = "total_rain__chirps_rain", 
+                        stat_st = "total_rain__station")
+
+ggsave(here("results", "syear_total_rain_h_adj.png"), width = 12, height = 6)
+
+```
+
+```{r yearly_total_rain_tables_h, results="asis"}
+stats_tables(gof_syear_h, "gof__total_rain", name = "Total Yearly Rainfall")
+```
+
+``` {r hurricane_season_n_rain_plots }
+yearly_plots(gof_pr_h, gof_col = "gof__n_rain", 
+             
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station")
+
+ggsave(here("results", "syear_n_rain_h_adj.png"), width = 12, height = 6)
+
+```
+
+```{r yearly_n_rain_tables_h, results="asis"}
+stats_tables(gof_syear_h, "gof__n_rain", name = "number of rain days ")
+```
+
+## Monthly Comparisons
+
+```{r monthly_calcs}
+by_month <- zm_long %>%
+  group_by(station, syear, month_abb, product) %>%
+  #filter(month %in% c(11:12, 1:4)) %>%
+  summarise(total_rain = sum(naif_nmin(rain, 25)),  
+            n_rain = sum(naif_nmin(rain, 25) > 0.1),  
+            max_rain = max(naif_nmin(rain, 20)), 
+            mean_rain = ifelse(n_rain == 0, NA, total_rain/n_rain), 
+            n_na = sum(is.na(rain))
+            )
+
+by_month_st <- by_month %>%
+  pivot_wider(id_cols = c(station, syear, month_abb), 
+              names_from = product, values_from = total_rain:mean_rain, names_sep = "__") 
+
+
+gof_month <- by_month_st %>%
+  group_by(station) %>%
+  nest() %>%
+  mutate(n = purrr::map_int(data, 
+                        ~sum(!is.na(.$total_rain__station) & 
+                               !is.na(.$total_rain__chirps_rain))),
+         gof__total_rain = purrr::map(data, dgof, "total_rain__chirps_rain", 
+                                      "total_rain__station", 
+                                      na.rm = TRUE),
+         gof__n_rain = purrr::map(data, dgof, "n_rain__chirps_rain", "n_rain__station", 
+                                  na.rm = TRUE),
+         gof__mean_rain = purrr::map(data, dgof, "mean_rain__chirps_rain", 
+                                     "mean_rain__station", 
+                                      na.rm = TRUE)
+         
+         )
+
+
+gof_pr_month <- gof_month %>%
+  unnest(cols = data)
+```
+
+```{r monthly_plots_fun}
+monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
+  max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
+  vals_relace <- c(product_name, "station")
+  names(vals_relace) <- c(stat_pr, stat_st)
+  dat <- df %>% 
+    filter(month_abb %in% month.abb[c(1:12)]) %>%
+    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
+    mutate(product = recode(product, !!!vals_relace),
+           ME = purrr::map_dbl(.data[[gof_col]], "ME"),
+           r = purrr::map_dbl(.data[[gof_col]], "r"),
+           rSD = purrr::map_dbl(.data[[gof_col]], "rSD"))
+  mean_df <- dat %>% 
+    group_by(station, product, month_abb) %>% 
+    summarise(m = mean(.data[[stat_pr]], na.rm = TRUE))
+
+  g <- ggplot(dat, aes(x = syear, y = .data[[stat_pr]], colour = product)) +
+    geom_line() +
+    geom_point() +
+    geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    scale_x_continuous(limits = c(1979, 2012)) +
+    ggtitle(paste(stat_pr, ":", product_name, "vs", "station")) +
+    facet_wrap(~month_abb) 
+     # n
+  #  geom_text(data = dat, aes(label = paste("n", n, sep = "  ")), size = 4,
+              #x = 1979, y = max_y, na.rm = TRUE, 
+             # inherit.aes = FALSE)  +
+    
+    # bias
+   # geom_text(data = dat, aes(label = paste("bias", signif(ME, 2), sep = "  ")), 
+            #  size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+           #   inherit.aes = FALSE) +
+    # cor
+    #geom_text(aes(label = paste("cor", round(r, 2), sep = "  ")), 
+          #    size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+         #     inherit.aes = FALSE)  +
+    # rSD
+    #geom_text(aes(label = paste("rSD", round(rSD, 2), sep = "  ")), 
+     #         size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+        #      inherit.aes = FALSE) 
+    
+    
+  g
+}
+
+```
+
+### Comparison statistics for total monthly rainfall
+
+```{r monthly_plots_total_rain}
+for (i in seq_along(stations)) {
+  s <- stations[i]
+  monthly_plots(gof_pr_month %>% filter(station == s),
+                stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
+                stat_st = "total_rain__station", product_name = "CHIRPS")
+  
+  ggsave(here( "results", paste0("month_total_rain_adj", s, ".png")), width = 12, height = 6)
+}
+```
+
+```{r monthly_tables_total_rain, results="asis"}
+stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
+```
+
+### Comparison statistics for number of monthly raindays
+
+
+```{r monthly_plots_n_rain}
+for (i in seq_along(stations)) {
+  s <- stations[i]
+monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
+                        stat_pr = "n_rain__chirps_rain", 
+                        stat_st = "n_rain__station", product_name = "CHIRPS")  
+
+ggsave(here("results", paste0("smonth_n_rain_adj", s, ".png")), width = 12, height = 6)
+}
+
+```
+
+```{r monthly_tables_n_rain, results="asis"}
+stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month")
+```
+## Markov Chain models of the chance of rain
+
+
+```{r markov_chain_setup}
+haiti_markov <- zm %>% 
+  filter(!is.na(chirps_rain) & !is.na(rain)) %>%
+  mutate(rainday1 = rain > 0.85,
+         pr_rainday1 = chirps_rain > 0.85,
+         pr_rainday2 = chirps_rain > 2,
+         pr_rainday3 = chirps_rain > 3,
+         pr_rainday4 = chirps_rain > 4,
+         pr_rainday5 = chirps_rain > 5)
+
+f_zero_order_station <- rainday1 ~ (cos(s_doy * 1 * 2 * pi/366) +
+                                    sin(s_doy * 1 * 2 * pi/366) + 
+                                    cos(s_doy * 2 * 2 * pi/366) + 
+                                    sin(s_doy * 2 * 2 * pi/366) +
+                                    cos(s_doy * 3 * 2 * pi/366) +
+                                    sin(s_doy * 3 * 2 * pi/366))
+f_zero_order_product <- update.formula(f_zero_order_station, pr_rainday1 ~ .)
+
+predict_stack_lst <- list()
+
+for(s in seq_along(stations)) {  
+  predict_df <- data.frame(station = stations[s], s_doy = 1:366,
+                           s_doy_date = as.Date(1:366, origin = as.Date("1999/12/31")))
+  dat <- haiti_markov %>%
+    filter(station == stations[s])
+
+  zero_order_station <- glm(f_zero_order_station, data = dat, family = binomial)
+  zero_order_product <- glm(f_zero_order_product, data = dat, family = binomial)
+  #print(anova(zero_order_station, test="Chisq"))
+  predict_df[["station_fit"]] <- predict(zero_order_station, newdata = predict_df,
+                                         type = "response")
+  predict_df[["chirps_fit"]] <- predict(zero_order_product, newdata = predict_df,
+                                        type = "response")
+  
+  f_zero_order_product_2thres <- update.formula(f_zero_order_station, pr_rainday2 ~ .)
+  f_zero_order_product_3thres <- update.formula(f_zero_order_station, pr_rainday3 ~ .)
+  f_zero_order_product_4thres <- update.formula(f_zero_order_station, pr_rainday4 ~ .)
+  f_zero_order_product_5thres <- update.formula(f_zero_order_station, pr_rainday5 ~ .)
+  fms_thres <- list(f_zero_order_product_2thres, f_zero_order_product_3thres,
+                    f_zero_order_product_4thres, f_zero_order_product_5thres)
+  for(j in seq_along(fms_thres)) {
+    zero_order <- glm(fms_thres[[j]], data = dat, family = binomial)
+    predict_df[[paste0("chirps", "_", j + 1, "thres")]] <- predict(zero_order,
+                                                                   newdata = predict_df,
+                                                                   type = "response")
+  }
+
+  predict_stack <- predict_df %>% melt(id.vars = c("station", "s_doy", "s_doy_date"), 
+                                       variable.name = "product", value.name = "prob")
+
+  predict_stack$product <- as.character(predict_stack$product)
+  predict_stack_lst[[length(predict_stack_lst) + 1]] <- predict_stack
+  # Plot small amounts
+  # g <- ggplot(predict_stack, aes(x = s_doy, y = prob, colour = type)) +
+  #   geom_line() +
+  #   facet_wrap(~product2) +
+  #   scale_color_manual(values = c("black", c25[1:7])) +
+  #   ggtitle(paste("Chance of rain:", stations[s]))
+  # ggsave(here("results", "haiti", paste0("haiti_", "markov_zero", stations[s], ".png")), 
+  #        plot = g, width = 12, height = 6)
+}
+predict_stack_all <- bind_rows(predict_stack_lst)
+predict_stack_all$product <- factor(predict_stack_all$product)
+predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
+```
+
+
+```{r markov_chain_plots}
+  dat <- predict_stack_all %>% filter(product %in% c("station_fit", "chirps_fit"))
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product, size = product)) +
+    geom_line() +
+    facet_wrap(~station) +
+    scale_size_manual(values = c(0.8, rep(0.6, 4))) +
+    scale_color_manual(values = c("black", c25[1:4])) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+    ggtitle(paste("Chance of rain"))
+  print(g)
+  ggsave(here("results", paste0("markov_zero_adj.png")),
+         plot = g, width = 12, height = 6)
+```
+
+```{r markov_chain_plots_thresh}
+  dat <- predict_stack_all
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product, size = product)) +
+    geom_line() +
+    facet_wrap(~station) +
+    scale_size_manual(values = c(0.8, rep(0.6, 5))) +
+    scale_color_manual(values = c("black", c25[1:5])) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+    ggtitle(paste("Chance of rain"))
+  print(g)
+  ggsave(here( "results", paste0("markov_zero_threshs_adj.png")),
+         plot = g, width = 12, height = 6)
+```
+
+
+
