@@ -52,7 +52,7 @@ monthly_data <- filter(monthly_data, year >= 1981) %>%
 full_data <- full_join(monthly_data, alpha_grouped, by = c("station", "year", "month"))
 
 full_data <- full_data %>%
- mutate(ratio = ifelse(!is.na(station_rain) & !is.na(t_rain_chirps), t_rain_chirps/station_rain, NA))
+ mutate(ratio = ifelse(!is.na(station_rain) & !is.na(t_rain_chirps), station_rain/t_rain_chirps, NA))
 #some inf that you will have to deal with above
 
 #tidying up our data for the station chirps values 
