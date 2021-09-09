@@ -67,4 +67,14 @@ alpha_grouped$ratio[is.nan(alpha_grouped$ratio)] <- NA
 alpha_grouped[alpha_grouped == Inf] <- 0
 
 alpha_grouped <- alpha_grouped %>%
-  mutate(chirps_rain_adj = ifelse(!is.na(ratio), chirps_rain_adj * ratio, chirps_rain_adj))
+  mutate(chirps_rain_adj = ifelse(!is.na(ratio), chirps_rain_adj * ratio, chirps_rain_adj),
+         month.abb = month.abb[month])
+write.csv(alpha_grouped , here("data", "alpha_grouped.csv"))
+
+
+g <- ggplot(alpha_grouped, mapping = aes(factor(month), chirps_thresh, colour = station)) +
+  
+  geom_line()
+
+print(g)
+ggsave(here("results", "chirps_thresh_comparisons.png"), width = 12, height = 6)

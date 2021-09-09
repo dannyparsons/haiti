@@ -1,6 +1,6 @@
 ---
 title: "Haiti Comparisons"
-author: "Danny"
+author: "Ibrahim Mohamed, Danny Parsons"
 date: "11/06/2020"
 output:
   html_document:
