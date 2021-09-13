@@ -1,6 +1,6 @@
 ---
 title: "Haiti Comparisons"
-author: "Ibrahim Mohamed, Danny Parsons"
+author: "Danny"
 date: "11/06/2020"
 output:
   html_document:
@@ -8,8 +8,10 @@ output:
     fig_height: 6
   pdf_document: default
 ---
-## summary
-Overall this data tells us that the total yearly rainfall is quite well estimated on average by CHIRPS, but there's little correlation between yearly values.We notice that Outside of the hurricane season, CHIRPS seems to miss most of the rainfall events. However, Within the hurricane season the estimates of total seasonal rainfall are quite good though the number of rain days is overestimated which is expected from chirps.The bias in the number of rain days in the hurricane season looks to be highly seasonally and spatially dependent. If we were to correct this bias we might need to take a closer look at month and location dependent corrections.
+##summary
+- Total yearly rainfall is quite well estimated on average by CHIRPS, but there's little correlation between yearly values.
+- Outside of the hurricane season, CHIRPS seems to miss most of the rainfall events. Within the hurricane season the estimates of total seasonal rainfall and quite good, and the number of rain days is overestimated (as expected)
+- The bias in the number of rain days in the hurricane season looks to be highly seasonally and spatially dependent. If we want to correct this bias we might need month and location dependent corrections.
 
 
 
@@ -39,7 +41,7 @@ library(sf)
 ```
 
 ```{r setup, include=FALSE}
-source(here("src", "helper_funs.R"))
+source(here( "helper_funs.R"))
 zm <- readRDS(here( "data", "daily_data_sorted1.RDS"))
 
 zm <- zm$get_data_frame("merge")
@@ -78,7 +80,7 @@ zm_zero_months <- zm %>%
             n_na = sum(is.na(rain))) %>%
   filter(t_rain == 0 & n_na == 0)%>%
 
-write.csv(here ("data", "zero_months.csv"))
+write.csv(here ("zero_months.csv"))
 zm_month <- zm %>%
   group_by(station, year, month) %>%
   summarise(t_rain = sum(rain),
@@ -158,6 +160,11 @@ skable <- function(kable_input) {
 
 ## Stations
 
+- Mansa is the only station in the North. 
+- It's results are different to the other three, which could be the location or the quality of the station
+- Would be useful to have further stations in the North
+- Station data filtered to start in 1979 (earliest product year)
+
 ```{r}
 metadata_station %>% 
   dplyr::select(station, latitude, longitude) %>%   ##may have to add a min year/max year column
@@ -169,12 +176,12 @@ metadata_station %>%
 ```{r station_map, fig.width=9, fig.height=4.5}
 hti_admbnda_adm0_cnigs_20181129 <- 
   sf::st_read(quiet=TRUE, 
-              dsn = here("data", "hti_adm_cnigs_20181129",  
+              dsn = here( "data", "hti_adm_cnigs_20181129",  
                          "hti_admbnda_adm0_cnigs_20181129.shp")) %>%
   dplyr::mutate(lon = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]),
                 lat = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]]))
 
-locs <- read.csv(here("data", "daily_metadata.csv"))
+locs <- read.csv(here( "data", "daily_metadata.csv"))
 width <- 0.05
 
 ggplot2::ggplot() +
@@ -252,8 +259,11 @@ gof_pr <- gof_syear %>%
 ```
 
 ## hurricane season comparisons 
-Our hurricane season runs from June to November.We notice that in the graph for number of rainy days the (absolute) bias increases for the stations cap haitien, quanaminthe , jeremie , damien, petitionville and it decreases in les cayes and jacmel. We should note that les cayes and jacmel are very similar to each other in latitude so perhaps looking at further southern station values to see if this pattern is consistent would prove valuable. 
-For total rainfall what we see is that the (absolute) bias is lower for all stations in the hurricane season except petitionville.This suggests that in the hurricane season CHIRPS is a better estimate of the average total rainfall over that period but not the number of raindays. If we look at the monthly graphs below what we should observe is that the biases for the months June - November should be lower for total rainfall in the stations mentioned and number of rain days should have a bias that is higher in the stations mentioned to explain this trend.  
+-Our hurricane season runs from June to November 
+-We notice that in the graph for number of rainy days the (absolute) bias increases for the stations cap haitien, quanaminthe , jeremie , damien, petitionville and it decreases in les cayes and jacmel. We should note that les cayes and jacmel are very similar to each other in latitude
+-For total rainfall what we see is that the (absolute) bias is lower for all station in the hurricane season except petitionville. 
+-This suggests that in the hurricane season chirps estimates better the average total rainfall over that period but not the number of raindays
+-If we look at the monthly graphs below what we we should observe is that the biases for the months in the months June - November should be lower for total rainfall in the stations mentioned and n rain days bias should be higher in the stations mentioned to explain this trend 
 -
 
 ```{r hurricane_season_calc}
@@ -356,7 +366,11 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
 ```
 
 ### Comparison Statistics for Total Yearly Rainfall
-The n represents the number of years of comparison between CHIPRS and station values, THE bias tells us how much the average rainfall between station and CHIRPS vales differ and cor tell the correlation between these values.rSD stands for relative standard deviation. Correlation between the station and chirps value goes from an (absolute) low of 0.01 for petitionville to a high  of 0.67 for les cayes.We not that correlation is on the Low side for most stations. This likely means that we would have difficulty using the CHIRPS as a predictor of rain throughout the year.The (absolute) bias is quite low for the stations: cap Haitian , Quanaminthe, Jeremie and Petitionville, with all of them within a 100 of the station value. It is highest for les cayes which has a bias of -680. This data suggests might be able to use the chirps data with the stations that have a lower bias to determine how much rainfall there is across the whole year. It is worth  noting that Jacmel has 38 years of comparison and Jeremie has only 18 with the rest of the stations distributed between those 2 values. 
+
+- Correlation between the station and chirps value goes from a (absolute) low of 0.01 for petitionville to a high  of 0.67 for les cayes.We can see that correlation is on the Low side for most stations. This likely means that we would have difficulty using the chirps as a predictor 
+-The (absolute) bias is quite low for the stations cap Haitian , Quanaminthe, Jeremie and Petitionville with all of them within a 100. It is highest for les cayes which has a bias of -680. We might be able to use the chirps data with the stations that have a lower bias to get an idea of how much rainfall there is. 
+-It is worth  noting that Jacmel has 38 years of comparison and Jeremie has only 18 with the rest of the stations distributed between those 2 values. 
+-
 
 ```{r yearly_total_plots}
 yearly_plots(gof_pr, gof_col = "gof__total_rain", 
@@ -381,7 +395,9 @@ stats_tables(gof_syear, "gof__total_rain", name = "Total Yearly Rainfall")
 
 ### Comparison Statistics for Number of rainy days
 
-Correlation on the whole is very low between CHIRPS and station values across all the stations.The bias is quite low for the same sort of stations when we looked at total rainfall(cap Haitian,quanaminthe,Jeremie,Damien,petitionille). 
+-Correlation on the whole is very low between chirps and station values across all the stations 
+-The bias is quite low for the same sort of stations when we looked at total rainfall (cap Haitian,Quanaminthe,Jeremie,Damien,Petitionille)
+-One anomalous result that requires further inspection is the very high number of rain days that we have for les cayes in the years 1995-2000. A further inspection of those values is needed. 
 ```{r yearly_n_rain_plots}
 
 yearly_plots(gof_pr, gof_col = "gof__n_rain", 
@@ -397,7 +413,6 @@ stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
 ```
 
 ## hurricane season comparisons (total rainfall)
-
 ``` {r hurricane_season_plots}
 
 yearly_plots(gof_pr_h, gof_col = "gof__total_rain", 
@@ -511,10 +526,18 @@ monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name) {
   g
 }
 
+view (gof_pr_month)
 ```
 
 ### Comparison statistics for total monthly rainfall
-For Cap Haitian , on the whole the bias is quite low with peaks in January and May.Damien also has low biases except for March , April and Oct. The biases in Jacmel tend to be higher between the months of April and November whereas biases in Jeremie are on the low side, except for the month March. Les cayes has very little rainfall between December and April so our chirps data is always overestimating, biases on the whole are quite low and there are no outliers that we can spot easily.For petitionville we have very little station rain between December and march, October 2003/2004 seems to have an outlying value of total rain. For quanaminthe, the biases are in general quite low with slightly larger ones for May. We have some outlying station values , most notably Jan 2008/2009 and Nov 2012/2013 where the station value seems very out of line with the chirps estimate. A closer look at these outliers is likely needed. 
+-For Cap Haitian , on the whole the bias is quite low with peaks in January and may 
+-Damien also has low biases except for March , April and Oct
+-The biases in Jacmel tend to be higher between the months of April and November 
+-Biases in Jeremie are on the low side, except for the month March
+-Les cayes has very little rainfall between December and April so or chirps data is always overestimating, biases on the whole are quite low and there are no immediate outliers. 
+-For petitionville we have very little station rain between December and march, October 2003/2004 seems to have an outlying value of total rain
+-For quanaminthe, the biases are in general quite low with slightly larger ones for May. We have some outlying station values , most notably Jan 2008/2009 and Nov 2012/2013 where the station value seems very out of line with the chirps estimate
+
 
 ```{r monthly_plots_total_rain}
 for (i in seq_along(stations)) {
@@ -532,16 +555,23 @@ stats_tables(gof_month, "gof__total_rain", name = "total_rain_stats")
 ```
 
 ### Comparison statistics for number of monthly raindays
-For Cap Haitian the bias is quite low between December and April, it is quite a bit larger during the remaining months and especially during July , August and November.For Damien, the bias is fairly low between October and February where it starts to increase. The months July and April have particularly high biases.For Jacmel we get that the bias is particularly high for the months March, April and May.For jeremie the bias is generally low with perhaps the exception of August, where it is a bit higher than other places.Les cayes has a small amount of (CHIRPS) raindays between December and April and this leads to high biases in those months.The highest biases are in the months April and May.For petitionville, the biases vary considerably and none of them are clear outliers. Around may 1993 we see that it rained every day of the month for this station and that stands out a bit so perhaps further inspection of that would provide valuable insight.The biases for quanaminthe tend to be considerable higher in the months July and August. 
+-For Cap Haitian the bias is quite low between December and April, it is quite a bit larger during the remaining months and especially during July , August and November. 
+-For Damien, the bias is fairly low between October and February where it starts to increase. The months July and April have particularly high biases. 
+- For Jacmel we get that the bias is particularly high for the months March, April and May.
+-For jeremie the bias is generally low with perhaps the exception of August where is is a bit higher than other places.
+-Les cayes has a small amount of (chirps) raindays between Dec and April and this leads to high biases in those months.The highest biases are in the months April and May. 
+-For petitionville, the biases vary considerably and none of them are clear outliers. Around may 1993 we see that it rained every day of the month for this station and that stands out a bit so perhaps further inspection of that would be a good idea.
+-The biases for quanaminthe tend to be considerable higher in the months July and August. 
 
 ```{r monthly_plots_n_rain}
 for (i in seq_along(stations)) {
   s <- stations[i]
+
 monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
                         stat_pr = "n_rain__chirps_rain", 
                         stat_st = "n_rain__station", product_name = "CHIRPS")  
 
-ggsave(here("results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
+ggsave(here( "results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
 }
 
 ```
@@ -551,7 +581,11 @@ stats_tables(gof_month, "gof__n_rain", name = "n_rain_stats_month")
 ```
 ## Markov Chain models of the chance of rain
 
-All the stations have a model for rain that is roughly the same so that the peaks and troughs occur at the same point in the year.While the station rain is predicted to have two peaks, the chirps model looks like it has one peak in Aug-Sep.For most stations the probabilities tend to be closer for the months Oct-Dec. Threshold 5 seems to improve the fit to the station for quanaminthe and cap haitian however it does not make much of a difference to the remaining stations. 
+- All the stations have a model for rain that is roughly the same so that the peaks and troughs occur at the same point in the year.
+- While the station rain is predicted to have two peaks, the chirps model looks like it has one peak in Aug-Sep. 
+- For most stations the probabilities tend to be closer for the months Oct-Dec
+-Threshold 5 seems to improve the fit to the station for Quanaminthe and Cap Haitian however it does not make much of a difference to the remaining stations. 
+-
 
 ```{r markov_chain_setup}
 haiti_markov <- zm %>% 
