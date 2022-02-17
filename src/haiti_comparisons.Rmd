@@ -4,8 +4,6 @@ title: Comparison of CHIRPS rainfall estimates and ground station measurements o
 author: "Ibrahim Mohamed & Danny Parsons"
 date: "13/06/2021"
 output:
-  pdf_document: default
-  word_document: default
   html_document:
     fig_width: 12
     fig_height: 6
@@ -53,7 +51,7 @@ library (ggspatial)
 library(sf)
 ```
 
-```{r setup, include=FALSE}
+```{r data, include=FALSE}
 source(here("src", "helper_funs.R"))
 zm <- readRDS(here( "data", "daily_data_sorted1.RDS"))
 
@@ -236,7 +234,7 @@ quality_control <- zm_long %>%
 by_syear <- zm_long %>%
   group_by(syear,station,product) %>%
   summarise(total_rain = sum(naif_nmin(rain, 330)),
-            n_rain = sum(naif_nmin(rain, 330) > 0.1),
+            n_rain = sum(naif_nmin(rain, 330) >= 1),
             max_rain = max(naif_nmin(rain, 330)),
             mean_rain = total_rain/n_rain,
             n_na = sum(is.na(rain))
@@ -275,7 +273,7 @@ zm_long_h <- filter(zm_long,month %in% c(6:11))
 by_syear_h <- zm_long_h %>%
   group_by(syear,station,product) %>%
   summarise(total_rain = sum(naif_nmin(rain, 150)),    #since we are dealing with 6 month here instead of the full year i had to change from 330 to 150 
-            n_rain = sum(naif_nmin(rain, 150) > 0.1),
+            n_rain = sum(naif_nmin(rain, 150) > 1),
             max_rain = max(naif_nmin(rain, 150)),
             mean_rain = total_rain/n_rain,
             n_na = sum(is.na(rain))
@@ -313,7 +311,7 @@ gof_pr_h <- gof_syear_h %>%
 yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
   max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
   dat <- df %>% 
-    pivot_longer(cols = c(stat_pr, stat_st), names_to = "product", values_to = stat_pr) %>%
+    pivot_longer(cols = tidyselect::all_of(c(stat_pr, stat_st)), names_to = "product", values_to = stat_pr) %>%
     mutate(ME = purrr::map_dbl(.data[[gof_col]], "ME"),
            r = purrr::map_dbl(.data[[gof_col]], "r"),
            rSD = purrr::map_dbl(.data[[gof_col]], "rSD")
@@ -491,12 +489,43 @@ For number of rainy days there is generally a consistent overestimation from CHI
 We also note that the results for Les Cayes and Jacmel are very similar to each other and have a similar latitude so perhaps looking further at the Southern coast climate could prove valuable.
 
 ``` {r hurricane_season_plots}
+max_y <- max(c(gof_pr_h$total_rain__chirps_rain, gof_pr_h$total_rain__station), na.rm = TRUE)
+dat <- gof_pr_h %>% 
+  tidyr::pivot_longer(cols = c(total_rain__chirps_rain, total_rain__station), names_to = "product", values_to = "total_rain") %>%
+  mutate(ME = purrr::map_dbl(gof__total_rain, "ME"),
+         r = purrr::map_dbl(gof__total_rain, "r"),
+         rSD = purrr::map_dbl(gof__total_rain, "rSD")
+         )
+mean_df <- dat %>% 
+  group_by(station, product) %>% 
+  summarise(m = mean(total_rain, na.rm = TRUE))
+g <- ggplot(dat, aes(x = syear, y = total_rain, colour = product)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+  scale_x_continuous(limits = c(1979, 2012)) +
+  # n
+  geom_text(data = dat, aes(label = paste("n", n)), size = 4,
+            x = 1979, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # bias
+  geom_text(data = dat, aes(label = paste("bias", signif(ME, 2))), 
+            size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # cor
+  geom_text(aes(label = paste("cor", round(r, 2))), 
+            size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # rSD
+  geom_text(aes(label = paste("rSD", round(rSD, 2))), 
+            size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  scale_colour_manual(name = "Source", labels = c("CHIRPS", "Station"), values = c25[1:2]) +
+  labs(x = "Year", y = "Total Rainfall (mm)") +
+  ggtitle(paste("June to November Total Rainfall: CHIRPS", "vs", "station")) +
+  facet_wrap(~station)
 
-yearly_plots(gof_pr_h, gof_col = "gof__total_rain", 
-                        stat_pr = "total_rain__chirps_rain", 
-                        stat_st = "total_rain__station")
-
-ggsave(here("results", "syear_total_rain_h.png"), width = 12, height = 6)
+ggsave(here("results", "syear_total_rain_h.png"), g, width = 12, height = 6)
 
 ```
 
@@ -539,13 +568,43 @@ NSE = Nash-Sutcliffe efficiency, perfect value = 1
 rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1
 
 ``` {r hurricane_season_n_rain_plots }
-yearly_plots(gof_pr_h, gof_col = "gof__n_rain", 
-             
-                        stat_pr = "n_rain__chirps_rain", 
-                        stat_st = "n_rain__station")
+max_y <- max(c(gof_pr_h$n_rain__chirps_rain, gof_pr_h$n_rain__station), na.rm = TRUE)
+dat <- gof_pr_h %>% 
+  tidyr::pivot_longer(cols = c(n_rain__chirps_rain, n_rain__station), names_to = "product", values_to = "n_rain") %>%
+  mutate(ME = purrr::map_dbl(gof__n_rain, "ME"),
+         r = purrr::map_dbl(gof__n_rain, "r"),
+         rSD = purrr::map_dbl(gof__n_rain, "rSD")
+         )
+mean_df <- dat %>% 
+  group_by(station, product) %>% 
+  summarise(m = mean(n_rain, na.rm = TRUE))
+g <- ggplot(dat, aes(x = syear, y = n_rain, colour = product)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+  scale_x_continuous(limits = c(1979, 2012)) +
+  # n
+  geom_text(data = dat, aes(label = paste("n", n)), size = 4,
+            x = 1979, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # bias
+  geom_text(data = dat, aes(label = paste("bias", signif(ME, 2))), 
+            size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # cor
+  geom_text(aes(label = paste("cor", round(r, 2))), 
+            size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  # rSD
+  geom_text(aes(label = paste("rSD", round(rSD, 2))), 
+            size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
+            inherit.aes = FALSE) +
+  scale_colour_manual(name = "Source", labels = c("CHIRPS", "Station"), values = c25[1:2]) +
+  labs(x = "Year", y = "Number of rain days (mm)") +
+  ggtitle(paste("June to November Number of rain days: CHIRPS", "vs", "station"), subtitle = "Rain day is day with >= 1mm") +
+  facet_wrap(~station)
 
-ggsave(here("results", "syear_n_rain_h.png"), width = 12, height = 6)
-
+ggsave(here("results", "syear_n_rain_h.png"), g, width = 12, height = 6)
 ```
 
 Hurricane season number of rain days from the station data (blue) and CHIRPS (red). The blue and red horizontal lines represent the average hurricane season number of rain days from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics. 
@@ -593,7 +652,7 @@ by_month <- zm_long %>%
   group_by(station, syear, month_abb, product) %>%
   #filter(month %in% c(11:12, 1:4)) %>%
   summarise(total_rain = sum(naif_nmin(rain, 25)),  
-            n_rain = sum(naif_nmin(rain, 25) > 0.1),  
+            n_rain = sum(naif_nmin(rain, 25) > 1),  
             max_rain = max(naif_nmin(rain, 20)), 
             mean_rain = ifelse(n_rain == 0, NA, total_rain/n_rain), 
             n_na = sum(is.na(rain))
@@ -704,12 +763,32 @@ For Cap Haitian the bias is quite low between December and April, it is quite a 
 ```{r monthly_plots_n_rain}
 for (i in seq_along(stations)) {
   s <- stations[i]
-  print(monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
-                      stat_pr = "n_rain__chirps_rain",
-                      stat_st = "n_rain__station", product_name = "CHIRPS", station = s))
+  df <- gof_pr_month %>% filter(station == s)
+  # print(monthly_plots(gof_pr_month %>% filter(station == s), gof_col = "gof__n_rain",
+  #                     stat_pr = "n_rain__chirps_rain",
+  #                     stat_st = "n_rain__station", product_name = "CHIRPS", station = s))
+  
+  max_y <- max(c(df$n_rain__chirps_rain, df$n_rain__station), na.rm = TRUE)
+  dat <- df %>% 
+    pivot_longer(cols = c(n_rain__station, n_rain__chirps_rain), names_to = "Source", values_to = "n_rain") %>%
+    mutate(ME = purrr::map_dbl(.data$gof__n_rain, "ME"),
+           r = purrr::map_dbl(.data$gof__n_rain, "r"),
+           rSD = purrr::map_dbl(.data$gof__n_rain, "rSD"))
+  mean_df <- dat %>% 
+    group_by(station, Source, month_abb) %>% 
+    summarise(m = mean(n_rain, na.rm = TRUE))
+
+  g <- ggplot(dat, aes(x = syear, y = n_rain, colour = Source)) +
+    geom_line() +
+    geom_point() +
+    geom_hline(data = mean_df, aes(yintercept = m, colour = Source)) +
+    scale_x_continuous(limits = c(1979, 2012)) +
+    scale_colour_manual(labels = c("CHIRPS", "Station"), values = c25[1:2]) +
+    ggtitle(paste(s, "Monthly number of rain days: CHIRPS vs station"), subtitle = "Rain day is day with >= 1mm") +
+    facet_wrap(~month_abb) 
+  print(g)
   ggsave(here("results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
 }
-
 ```
 
 Total monthly number of rain days from the station data (blue) and CHIRPS (red). The blue and red horizontal lines represent the long term average monthly number of rain days from the station data and CHIRPS respectively.
@@ -743,7 +822,9 @@ f_zero_order_station <- rainday1 ~ (cos(s_doy * 1 * 2 * pi/366) +
                                     cos(s_doy * 2 * 2 * pi/366) + 
                                     sin(s_doy * 2 * 2 * pi/366) +
                                     cos(s_doy * 3 * 2 * pi/366) +
-                                    sin(s_doy * 3 * 2 * pi/366))
+                                    sin(s_doy * 3 * 2 * pi/366) +
+                                    cos(s_doy * 4 * 2 * pi/366) +
+                                    sin(s_doy * 4 * 2 * pi/366))
 f_zero_order_product <- update.formula(f_zero_order_station, pr_rainday1 ~ .)
 
 predict_stack_lst <- list()
@@ -797,13 +878,13 @@ predict_stack_all$product <- relevel(predict_stack_all$product, "station_fit")
 
 ```{r markov_chain_plots}
   dat <- predict_stack_all %>% filter(product %in% c("station_fit", "chirps_fit"))
-  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product, size = product)) +
-    geom_line() +
+  g <- ggplot(dat, aes(x = s_doy_date, y = prob, colour = product)) +
+    geom_line(size = 0.8) +
     facet_wrap(~station) +
-    scale_size_manual(values = c(0.8, rep(0.6, 4))) +
-    scale_color_manual(values = c("black", c25[1:4])) +
-    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-    ggtitle(paste("Chance of rain"))
+    scale_color_manual(name = "Source", labels = c("Station", "CHIRPS"), values = c("black", c25[1:4])) +
+    scale_x_date(name  ="Date", date_breaks = "2 months", date_labels = "%b") +
+    scale_y_continuous(name = "Probability of a rain day", breaks = seq(0, 1, 0.1), limits = c(0, NA)) +
+    ggtitle(paste("Probability of a rain day: Station vs CHIRPS"))
   print(g)
   ggsave(here("results", paste0("markov_zero.png")),
          plot = g, width = 12, height = 6)
@@ -825,5 +906,5 @@ Fitted probabilities of rainfall throughout the year for the station data (black
          plot = g, width = 12, height = 6)
 ```
 
-Fitted probabilities of rainfall throughout the year for the station data (black) and CHIRPS (coloured line). Each coloured line represents the probabilities using a different threshold for a rain days. The threshold values used are: 0.85mm (orange), 2mm (blue), 3mm (red), 4mm (green), 5mm (purple). As the threshold increases, the probabilities decrease, hence the curves with larger thresholds are beneth those with lower thresholds. Values are fitted for each 365/366 days of the year on the x-axis with probability values on the y-axis.
+Fitted probabilities of rainfall throughout the year for the station data (black) and CHIRPS (coloured line). Each coloured line represents the probabilities using a different threshold for a rain days. The threshold values used are: 0.85mm (orange), 2mm (blue), 3mm (red), 4mm (green), 5mm (purple). As the threshold increases, the probabilities decrease, hence the curves with larger thresholds are beneath those with lower thresholds. Values are fitted for each 365/366 days of the year on the x-axis with probability values on the y-axis.
 
