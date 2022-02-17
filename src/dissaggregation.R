@@ -3,7 +3,6 @@ library(ggplot2)
 library(lubridate)
 library(reshape2)
 library(viridis)
-library(RColorBrewer)
 library(tidyr)
 library(hydroGOF)
 library(stringr)
@@ -17,23 +16,22 @@ library(tibble)
 library(verification)
 library(purrr)
 library(dplyr)
-library (ggspatial)
+library(ggspatial)
 library(sf)
 library(tidyverse)
-# importing our sattelite data for the monthly stations
-alpha <- readRDS(here("data", "daily data sorted.RDS"))
-alpha <- alpha$get_data_frame("Sattelite_data")
 
-#
-alpha <- transmute(alpha,
-                station = station,
-                date = as.Date(date), 
-                year = year(date),
-                month = month(date),
-                day = day(date),
-                chirps_rain = chirps_rain
-)
-alpha_grouped <- alpha %>% 
+chirps_daily <- readRDS(here("data", "daily data sorted.RDS"))
+chirps_daily <- chirps_daily$get_data_frame("Sattelite_data")
+
+chirps_daily <- dplyr::transmute(chirps_daily,
+                                 station = station,
+                                 date = as.Date(date),
+                                 year = lubridate::year(date),
+                                 month = lubridate::month(date),
+                                 day = lubridate::day(date),
+                                 chirps_rain = chirps_rain
+                                 )
+chirps_monthly <- chirps_daily %>% 
   group_by(station, year, month) %>%
   summarise(t_rain_chirps = sum(chirps_rain, na.rm = TRUE))
 

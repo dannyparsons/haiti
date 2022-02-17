@@ -123,6 +123,7 @@ zm <- zm %>%
          rain = ifelse(high_rain, NA, rain),
          chirps_rain = ifelse(high_rain, NA, chirps_rain))
 zm$high_rain <- NULL
+saveRDS(zm, here("data", "daily_station_tidy.RDS"))
 ```
 
 ```{r data_formats}
