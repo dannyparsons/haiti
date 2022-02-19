@@ -1,8 +1,8 @@
 ---
-title: Comparison of CHIRPS rainfall estimates and ground station measurements over
+title: Comparison of CHIRPS rainfall estimates and station records over
   Haiti
-author: "Ibrahim Mohamed & Danny Parsons"
-date: "13/06/2021"
+author: "Danny Parsons, Ibrahim Mohamed & Roger Stern"
+date: "14/02/2022"
 output:
   html_document:
     fig_width: 12
@@ -49,6 +49,7 @@ library(purrr)
 library(dplyr)
 library (ggspatial)
 library(sf)
+library(forcats)
 ```
 
 ```{r data, include=FALSE}
@@ -122,6 +123,16 @@ zm <- zm %>%
   mutate(high_rain = rain > 200,
          rain = ifelse(high_rain, NA, rain),
          chirps_rain = ifelse(high_rain, NA, chirps_rain))
+
+sts <- levels(zm$station)
+sts <- str_replace(sts, "_", " ")
+sts <- str_trim(sts)
+sts <- str_to_title(sts)
+levels(zm$station) <- sts
+zm$station <- fct_drop(zm$station)
+zm$station <- fct_reorder(zm$station, zm$latitde, mean, na.rm = TRUE)
+zm$station <- fct_rev(zm$station)
+
 zm$high_rain <- NULL
 saveRDS(zm, here("data", "daily_station_tidy.RDS"))
 ```
@@ -133,8 +144,6 @@ zm_long_st <- zm %>%
        measure.vars = names(zm)[endsWith(names(zm), "rain")][-1],
        variable.name = "product", value.name = "pr_rain")
 
-#the melt function takes data in a wide range of formats and stacks a set of columns into a single column of data
-
 #creates a rainday column where the values are true or false depending on if there is rain that day or not
 zm_long <- zm %>% 
   melt(id.vars = c("station", "date", "year", "syear", "month", "month_abb", "doy", "s_doy"),
@@ -143,17 +152,25 @@ zm_long <- zm %>%
   mutate(rainday = rain > 1)
 
 zm_long$product <- recode(zm_long$product, rain = "station")
-stations <- c( "cap_haitien", "quanaminthe", "jeremie", "damien", "petitionville", 
-               "jacmel", "les_cayes") #north to south would be a better order for these 
 products <- levels(zm_long$product)
 products <- products[-1]
 names(products) <- substr(products, 1, nchar(products) - 5)
 
 metadata_station <- read.csv(here("data", "daily_metadata.csv"))
 
-metadata_station$station <- factor(metadata_station$station, levels = stations) #making the 
+metadata_station$station <- factor(metadata_station$station)
+sts <- levels(metadata_station$station)
+sts <- str_replace(sts, "_", " ")
+sts <- str_trim(sts)
+sts <- str_to_title(sts)
+levels(metadata_station$station) <- sts
+metadata_station$station <- fct_drop(metadata_station$station)
+metadata_station$station <- fct_reorder(metadata_station$station, metadata_station$latitude, mean, na.rm = TRUE)
+metadata_station$station <- fct_rev(metadata_station$station)
+metadata_station <- metadata_station %>%
+  arrange(-latitude)
 
-zm_long$station <- factor(zm_long$station, levels = stations)
+zm_long$station <- factor(zm_long$station)
 
 by_station <- zm_long %>%
   group_by(station) %>%
@@ -172,7 +189,7 @@ skable <- function(kable_input) {
 
 ## Stations
 
-Daily data from seven stations at the locations below were kindly provided by UHM for this analysis. The corresponding 0.05 x 0.05 (~5km square) pixels closest to these points from the CHIRPS daily rainfall data were extracted to compare with the daily data records. Some quality control was carried out on the station data. In particular, extended periods of zero rainfall stretching over multiple months were removed. Also, very large daily rainfall values (> 200mm) were removed to prevent a small number of values having a large effect on the results. Comparison and analysis of extreme rainfall events from CHIRPS could be the topic of a further study.
+Daily data from seven stations at the locations below were kindly provided by Unité HydroMétéorologique d'Haïti (UHM) for this analysis. The corresponding 0.05 x 0.05 (~5km square) pixels closest to these points from the CHIRPS daily rainfall data were extracted to compare with the daily data records. Some quality control was carried out on the station data. In particular, extended periods of zero rainfall stretching over multiple months were removed. Also, very large daily rainfall values (> 200mm) were removed to prevent a small number of values having a large effect on the results. Comparison and analysis of extreme rainfall events from CHIRPS could be the topic of a further study.
 
 ```{r}
 metadata_station %>% 
@@ -190,17 +207,14 @@ hti_admbnda_adm0_cnigs_20181129 <-
   dplyr::mutate(lon = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[1]]),
                 lat = purrr::map_dbl(geometry, ~sf::st_centroid(.x)[[2]]))
 
-locs <- read.csv(here("data", "daily_metadata.csv"))
-width <- 0.05
-
 ggplot2::ggplot() +
   ggplot2::geom_sf(data = hti_admbnda_adm0_cnigs_20181129, 
                    mapping=ggplot2::aes()) + 
   theme_grey() +
-  geom_point(data = locs, aes(x = longitude, y = latitude), colour = "black") +
+  geom_point(data = metadata_station, aes(x = longitude, y = latitude), size = 2, colour = "red") +
   
- geom_text_repel(data = locs, aes(x = var1, y = var2, label = station, fontface = "italic"), 
-                 colour = "blue", size = 4) 
+ geom_label_repel(data = metadata_station, aes(x = longitude, y = latitude, label = station),
+                  size = 4) 
 ```
 
 ```{r gof_fun}
@@ -309,7 +323,9 @@ gof_pr_h <- gof_syear_h %>%
 
 
 ```{r yearly_plots_fun}
-yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
+yearly_plots <- function(df, gof_col, stat_pr, stat_st, title = "", product_name = "Source", 
+                         product_labels = c("CHIRPS", "Station"), 
+                         x_axis_label = "Year", y_axis_label) {
   max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
   dat <- df %>% 
     pivot_longer(cols = tidyselect::all_of(c(stat_pr, stat_st)), names_to = "product", values_to = stat_pr) %>%
@@ -324,6 +340,7 @@ yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
     geom_line() +
     geom_point() +
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
+    scale_colour_manual(name = product_name, labels = product_labels, values = c25[1:2]) +
     scale_x_continuous(limits = c(1979, 2012)) +
     # n
     geom_text(data = dat, aes(label = paste("n", n)), size = 4,
@@ -341,7 +358,8 @@ yearly_plots <- function(df, gof_col, stat_pr, stat_st) {
     geom_text(aes(label = paste("rSD", round(rSD, 2))), 
               size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
               inherit.aes = FALSE) +
-    ggtitle(paste(stat_pr, ":", "CHIRPS", "vs", "station")) +
+    ggtitle(title) +
+    labs(x = x_axis_label, y = y_axis_label) +
     facet_wrap(~station)
   g
 }
@@ -369,17 +387,19 @@ stats_tables <- function(df, obj_col, obj_stats = comp_stats, name) {
 
 ### Comparison Statistics for Total Yearly Rainfall
 
-The correlation between the station and CHIRPS yearly total rainfall ranges from an (absolute) low of 0.01 for petitionville to a high  of 0.67 for les cayes. We note that correlation is on the low side for most stations but slighly positive. This likely means that we would have difficulty using the CHIRPS as an estimator of total rainfall on a particular year compared to other years. The (absolute) bias is quite low for the stations: Cap Haitan, Quanaminthe, Jeremie and Petitionville, with all of them within a 100mm/year of the station value. It is highest for les cayes which has a bias of -680mm/year. This suggests in some locations CHIRPS estimates the average total rainfall reasonably well, but in some locations the bias is large as a proportion of the total rainfall. It is worth  noting that Jacmel has 38 years of comparison and Jeremie has only 18 with the rest of the stations distributed between those two values, as shown in the table below.
+The correlation between the station and CHIRPS yearly total rainfall ranges from an (absolute) low of 0.01 for Petitionville to a high of 0.67 for Les Cayes. We note that correlation is on the low side for most stations but slightly positive. This likely means that we would have difficulty using the CHIRPS as an estimator of total rainfall on a particular year. The (absolute) bias is quite low for the stations: Cap Haitan, Quanaminthe, Jeremie and Petitionville, with all of them within 100mm/year of the station data. It is highest for Les Cayes, which has a bias of -680mm/year. This suggests in some locations CHIRPS estimates the average total rainfall reasonably well, but in some locations the bias is large as a proportion of the total rainfall. It is worth  noting that Jacmel has 38 years of comparison and Jeremie has only 18 with the rest of the stations distributed between those two values, as shown in the table below.
 
 ```{r yearly_total_plots}
-yearly_plots(gof_pr, gof_col = "gof__total_rain", 
-                        stat_pr = "total_rain__chirps_rain", 
-                        stat_st = "total_rain__station")
+yearly_plots(gof_pr, gof_col = "gof__total_rain",
+             stat_pr = "total_rain__chirps_rain",
+             stat_st = "total_rain__station", title = "Annual total rainfall: CHIRPS vs station", 
+             product_name = "Source", product_labels = c("CHIRPS", "Station"), 
+             x_axis_label = "Year", y_axis_label = "Total rainfall (mm)")
 
 ggsave(here("results", "syear_total_rain.png"), width = 12, height = 6)
 
 ```
-Total yearly rainfall in mm from the station data (blue) and CHIRPS (red). The blue and red horizontal lines represent the average yearly total rainfall from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics.
+Total yearly rainfall in mm from the station data (red) and CHIRPS (blue). The red and blue horizontal lines represent the average yearly total rainfall from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics.
 
 
 n = Number of years compared
@@ -426,19 +446,18 @@ rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1
 
 ### Comparison Statistics for Number of rainy days
 
-Correlation on the whole is very low between CHIRPS and station values across all the stations. The bias is also quite low on average across the year. However, as will be seen on a monthly basis, this is hiding an overestimation and underestimation in different parts of the year. Hence, these results are not representative of the performance of CHIRPS.
+Correlation on the whole is very low between CHIRPS and station values across all the stations. The bias is also quite low on average across the year. However, as will be seen on a monthly basis, this is hiding an overestimation and underestimation in different parts of the year. Hence, these results are not representative of the performance of CHIRPS throughout the year.
 
 ```{r yearly_n_rain_plots}
-
 yearly_plots(gof_pr, gof_col = "gof__n_rain", 
-             
                         stat_pr = "n_rain__chirps_rain", 
-                        stat_st = "n_rain__station")
+                        stat_st = "n_rain__station", 
+             product_name = "Source", product_labels = c("CHIRPS", "Station"), 
+             x_axis_label = "Year", y_axis_label = "Number of rain days/year")
 ggsave(here("results", "syear_n_rain.png"), width = 12, height = 6)
-#want to change the y axis to read n_rain instead of chirps
 ```
 
-Yearly number of rain days from the station data (blue) and CHIRPS (red). The blue and red horizontal lines represent the average yearly number of rain days from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics. 
+Yearly number of rain days from the station data (red) and CHIRPS (blue). The red and blue horizontal lines represent the average yearly number of rain days from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics. 
 
 
 n = Number of years compared
@@ -453,7 +472,7 @@ cor = Correlation coefficient, perfect value = 1
 rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1 
 
 ```{r yearly_n_rain_tables, results="asis"}
-stats_tables(gof_syear, "gof__n_rain", name = "number of rain days ")
+stats_tables(gof_syear, "gof__n_rain", name = "Annual number of rain days")
 ```
 
 Comparison statistics for total yearly number of rain days.
@@ -481,7 +500,7 @@ rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1
 We also consider the data just within the hurricane season of June to November. The same graphs and statistics for total and rainfall and number of rain days were produced just for this 6 month period.
 
 
-For total rainfall the (absolute) bias is lower for all stations in the hurricane season, except petitionville, compared to the full year. Hence, a large proportion of the bias in total rainfall comes outside the hurricane season.
+For total rainfall the (absolute) bias is lower for all stations in the hurricane season compared to the full year, except at Petitionville. Hence, a large proportion of the bias in total rainfall comes outside the hurricane season.
 
 
 For number of rainy days there is generally a consistent overestimation from CHIRPS at most stations, although there is location variability. Overestimation of number of rain days by a gridded data product (satellite data) compared to point based measurements (station data) is common and somewhat expected due to the areal nature of gridded data which represents the average rainfall over an area compared to at a point. There are established statistical methods to correct this overestimation if needed.
@@ -525,7 +544,7 @@ g <- ggplot(dat, aes(x = syear, y = total_rain, colour = product)) +
   labs(x = "Year", y = "Total Rainfall (mm)") +
   ggtitle(paste("June to November Total Rainfall: CHIRPS", "vs", "station")) +
   facet_wrap(~station)
-
+g
 ggsave(here("results", "syear_total_rain_h.png"), g, width = 12, height = 6)
 
 ```
@@ -545,7 +564,7 @@ cor = Correlation coefficient, perfect value = 1
 rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1 
 
 ```{r yearly_total_rain_tables_h, results="asis"}
-stats_tables(gof_syear_h, "gof__total_rain", name = "Total Yearly Rainfall")
+stats_tables(gof_syear_h, "gof__total_rain", name = "Hurricane Season Total Rainfall")
 ```
 
 Comparison statistics for total hurricane season rainfall.
@@ -568,7 +587,7 @@ NSE = Nash-Sutcliffe efficiency, perfect value = 1
 
 rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1
 
-``` {r hurricane_season_n_rain_plots }
+``` {r hurricane_season_n_rain_plots}
 max_y <- max(c(gof_pr_h$n_rain__chirps_rain, gof_pr_h$n_rain__station), na.rm = TRUE)
 dat <- gof_pr_h %>% 
   tidyr::pivot_longer(cols = c(n_rain__chirps_rain, n_rain__station), names_to = "product", values_to = "n_rain") %>%
@@ -601,14 +620,14 @@ g <- ggplot(dat, aes(x = syear, y = n_rain, colour = product)) +
             size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
             inherit.aes = FALSE) +
   scale_colour_manual(name = "Source", labels = c("CHIRPS", "Station"), values = c25[1:2]) +
-  labs(x = "Year", y = "Number of rain days (mm)") +
+  labs(x = "Year", y = "Number of rain days") +
   ggtitle(paste("June to November Number of rain days: CHIRPS", "vs", "station"), subtitle = "Rain day is day with >= 1mm") +
   facet_wrap(~station)
-
+g
 ggsave(here("results", "syear_n_rain_h.png"), g, width = 12, height = 6)
 ```
 
-Hurricane season number of rain days from the station data (blue) and CHIRPS (red). The blue and red horizontal lines represent the average hurricane season number of rain days from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics. 
+Hurricane season number of rain days from the station data (red) and CHIRPS (blue). The red and blue horizontal lines represent the average hurricane season number of rain days from the station data and CHIRPS respectively. The graphs are also annotated with comparison metrics. 
 
 
 n = Number of years compared
@@ -623,7 +642,7 @@ cor = Correlation coefficient, perfect value = 1
 rSD = ratio of standard deviations: sd_CHIRPS/sd_station, perfect value = 1 
 
 ```{r yearly_n_rain_tables_h, results="asis"}
-stats_tables(gof_syear_h, "gof__n_rain", name = "number of rain days ")
+stats_tables(gof_syear_h, "gof__n_rain", name = "Hurricane Season Number of rain days")
 ```
 
 Comparison statistics for total hurricane season number of rain days.
@@ -687,9 +706,11 @@ gof_pr_month <- gof_month %>%
 ```
 
 ```{r monthly_plots_fun}
-monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name, station) {
+monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name, station,
+                          products_name = "Source", product_labels = c("CHIRPS", "Station"),
+                          title = "", x_axis_label = "Year", y_axis_label) {
   max_y <- max(c(df[[stat_pr]], df[[stat_st]]), na.rm = TRUE)
-  vals_relace <- c(product_name, "station")
+  vals_relace <- c(product_name, "Station")
   names(vals_relace) <- c(stat_pr, stat_st)
   dat <- df %>% 
     filter(month_abb %in% month.abb[c(1:12)]) %>%
@@ -707,46 +728,31 @@ monthly_plots <- function(df, stat_pr,gof_col, stat_st, product_name, station) {
     geom_point() +
     geom_hline(data = mean_df, aes(yintercept = m, colour = product)) +
     scale_x_continuous(limits = c(1979, 2012)) +
-    ggtitle(paste(station, " - ", stat_pr, ":", product_name, "vs", "station")) +
+    scale_colour_manual(name = products_name, labels = product_labels, values = c25[1:2]) +
+    ggtitle(title) +
+    labs(x = x_axis_label, y = y_axis_label) +
     facet_wrap(~month_abb) 
-     # n
-  #  geom_text(data = dat, aes(label = paste("n", n, sep = "  ")), size = 4,
-              #x = 1979, y = max_y, na.rm = TRUE, 
-             # inherit.aes = FALSE)  +
-    
-    # bias
-   # geom_text(data = dat, aes(label = paste("bias", signif(ME, 2), sep = "  ")), 
-            #  size = 4, x = 1979 + 6, y = max_y, na.rm = TRUE, 
-           #   inherit.aes = FALSE) +
-    # cor
-    #geom_text(aes(label = paste("cor", round(r, 2), sep = "  ")), 
-          #    size = 4, x = 1979 + 14, y = max_y, na.rm = TRUE, 
-         #     inherit.aes = FALSE)  +
-    # rSD
-    #geom_text(aes(label = paste("rSD", round(rSD, 2), sep = "  ")), 
-     #         size = 4, x = 1979 + 22, y = max_y, na.rm = TRUE, 
-        #      inherit.aes = FALSE) 
-    
-    
   g
 }
-
 ```
 
 ### Comparison statistics for total monthly rainfall
 
-On a monthly basis, we observe some of the differences between inside and outside the hurricane season. This is particularly prominent at Les Cayes, where almost all rainfall events between January and March are missed, any underestimation in December and April.
+On a monthly basis, we observe some of the differences between inside and outside the hurricane season. This is particularly prominent at Les Cayes, where most rainfall events between January and March appeared to be missed, and underestimation in December and April.
 
 
 For Cap Haitian, in general the bias is quite low with peaks in January and May. Damien also has low biases except for March, April and Oct. The biases in Jacmel tend to be higher between the months of April and November whereas biases in Jeremie are on the low side, except for the month March. Les Cayes has very little rainfall between December and April so our chirps data is always overestimating, biases on the whole are quite low and there are no outliers that we can spot easily. For petitionville we have very little station rain between December and March, October 2003/2004 seems to have an outlying value of total rain. For quanaminthe, the biases are in general quite low with slightly larger ones for May. We have some outlying station values, most notably Jan 2008/2009 and Nov 2012/2013 where the station value seems very out of line with the CHIRPS estimate. A closer look at these outliers is likely needed. 
 
 ```{r monthly_plots_total_rain}
+stations <- levels(zm$station)
 for (i in seq_along(stations)) {
   s <- stations[i]
   print(monthly_plots(gof_pr_month %>% filter(station == s),
                       stat_pr = "total_rain__chirps_rain", gof_col = "gof__total_rain",
                       stat_st = "total_rain__station", product_name = "CHIRPS",
-                      station = s))
+                      station = s, products_name = "Source", product_labels = c("CHIRPS", "Station"),
+                      title = paste0(s, ": Monthly total rainfall: CHIRPS vs Station"),
+                      x_axis_label = "Year", y_axis_label = "Total rainfall (mm)"))
   
   ggsave(here( "results", paste0("month_total_rain_", s, ".png")), width = 12, height = 6)
 }
@@ -756,10 +762,10 @@ Total monthly rainfall in mm from the station data (blue) and CHIRPS (red). The 
 
 ### Comparison statistics for number of monthly raindays
 
-Here we again see substantial seasonal variation. A general pattern in some stations is overestimation of number of rain days in the hurricane season, and understimation outside. This gives the appearance of good performance on a yearly basis, but this is because positive and negative biases have cancelled out.
+Here we again see substantial seasonal variation. A general pattern in some stations is overestimation of number of rain days in the hurricane season, and underestimation outside. This gives the appearance of good performance on a yearly basis, but this is because positive and negative biases have cancelled out.
 
 
-For Cap Haitian the bias is quite low between December and April, it is quite a bit larger during the remaining months and especially during July , August and November.For Damien, the bias is fairly low between October and February where it starts to increase. The months July and April have particularly high biases. For Jacmel we get that the bias is particularly high for the months March, April and May. For jeremie the bias is generally low with perhaps the exception of August, where it is a bit higher than other places.Les cayes has a small amount of (CHIRPS) raindays between December and April and this leads to high biases in those months. The highest biases are in the months April and May. For petitionville, the biases vary considerably and none of them are clear outliers. Around may 1993 we see that it rained every day of the month for this station and that stands out a bit so perhaps further inspection of that would provide valuable insight. The biases for quanaminthe tend to be considerable higher in the months July and August.
+For Cap Haitian the bias is quite low between December and April and larger during the remaining months, especially July, August and November. For Damien, the bias is low between October and February. April and July have particularly high biases. For Jacmel the bias is particularly high from March to May. For Jeremie the bias is generally low with the exception of August, where it is a bit higher. At Les Cayes there are very few rain days from CHIRPS between December and April, and this leads to high biases in those months. For Petitionville, the biases increase in the hurricane season and are low otherwise. The biases for Quanaminthe tend to be considerable higher in the months July and August.
 
 ```{r monthly_plots_n_rain}
 for (i in seq_along(stations)) {
@@ -785,10 +791,11 @@ for (i in seq_along(stations)) {
     geom_hline(data = mean_df, aes(yintercept = m, colour = Source)) +
     scale_x_continuous(limits = c(1979, 2012)) +
     scale_colour_manual(labels = c("CHIRPS", "Station"), values = c25[1:2]) +
-    ggtitle(paste(s, "Monthly number of rain days: CHIRPS vs station"), subtitle = "Rain day is day with >= 1mm") +
+    ggtitle(paste0(s, ": Monthly number of rain days: CHIRPS vs station"), subtitle = "Rain day is day with >= 1mm") +
+    labs(x = "Year", y = "Number of rain days/month") +
     facet_wrap(~month_abb) 
   print(g)
-  ggsave(here("results", paste0("smonth_n_rain", s, ".png")), width = 12, height = 6)
+  ggsave(here("results", paste0("smonth_n_rain_", s, ".png")), width = 12, height = 6)
 }
 ```
 
@@ -797,13 +804,13 @@ Total monthly number of rain days from the station data (blue) and CHIRPS (red).
 
 ## Modelled probabilities of rainfall
 
-Zero-order Markov Chain models with three harmonics were fitted, using logistic regression, to the occurrence of rainfall (wet/dry, using a 0.85mm threshold for a rain day) to obtain fitted probabilities of rainfall through the 365/366 days of the year from the station and CHIRPS data
+Zero-order Markov Chain models with four harmonics were fitted, using logistic regression, to the occurrence of rainfall (wet/dry, using a 0.85mm threshold for a rain day) to obtain fitted probabilities of rainfall through the 365/366 days of the year from the station and CHIRPS data.
 
 
-At all the stations, the CHIRPS curves have a similar seasonal pattern to the station data, however, at stations with a bimodal pattern, CHIRPS often misses or underestimates the first peak. For most stations the probabilities tend to be closer for the months Oct-Dec. 
+At all the stations, the CHIRPS curves have a similar seasonal pattern to the station data. However, at stations with a bimodal pattern, CHIRPS often misses or underestimates the first peak. For most stations the probabilities tend to be closer for the months Oct-Dec. 
 
 
-In the second set of curves, where multiple threshold on the CHIRPS data were applied, a threshold of 5mm seems to improve the fit to the station data in parts of the year for quanaminthe and cap haitan, however it does not make much of a difference to the remaining stations.
+In the second set of curves, where multiple threshold on the CHIRPS data were applied, a threshold of 5mm seems to improve the fit to the station data in parts of the year for Quanaminthe and Cap Haitan, which gives confidence in threshold adjustments. However, it does not make as much of a difference to the remaining stations.
 
 
 It is promising to see closer fits in the hurricane season at some stations when slightly higher thresholds are applied. Increasing the threshold for a rainy day can be used to correct biases in the number of rain days. However, this can only correct for overestimations, as are observed in the hurricane season, but not underestimation, which is seen outside the hurricane season. It appears that any correction to the rain day threshold should be seasonally dependent and location dependent, at least to some extent.
